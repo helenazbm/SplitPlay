@@ -8,8 +8,8 @@ import {
   deleteAccount,
   getAuthErrorMessage,
   signOut,
-  updateDisplayName,
-} from "@/lib/services/auth";
+} from "@/lib/services/authService";
+import { updateDisplayName } from "@/lib/services/userService";
 
 export default function PerfilPage() {
   const router = useRouter();

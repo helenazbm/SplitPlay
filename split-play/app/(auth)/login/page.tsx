@@ -10,7 +10,7 @@ import { useState, type SyntheticEvent } from "react";
 import {
   getAuthErrorMessage,
   signInWithEmail,
-} from "@/lib/services/auth";
+} from "@/lib/services/authService";
 
 export default function LoginPage() {
   const router = useRouter();

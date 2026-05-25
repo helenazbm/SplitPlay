@@ -1,0 +1,50 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Coleção de usuários: cada doc é privado do dono.
+    match /users/{userId} {
+
+      // Leitura: só o próprio dono.
+      allow read: if request.auth != null
+                  && request.auth.uid == userId;
+
+      // Criação: precisa estar autenticado, doc id == uid e
+      // os campos imutáveis precisam bater com o auth.
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.uid == userId
+                    && request.resource.data.type in ['registered', 'anonymous']
+                    && request.resource.data.coins is int
+                    && request.resource.data.coins >= 0
+                    && request.resource.data.currentTableId == null
+                    && (!('photoURL' in request.resource.data.keys())
+                        || request.resource.data.photoURL == null
+                        || request.resource.data.photoURL is string);
+
+      // Atualização: só o dono. Campos imutáveis não podem mudar.
+      // `coins` não pode ser editado pelo client (server-side via Cloud Functions / Admin SDK).
+      // `photoURL` é opcional, mas se presente precisa ser string ou null
+      // (URL gerada pelo download do Firebase Storage após upload do avatar).
+      allow update: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.uid == resource.data.uid
+                    && request.resource.data.type == resource.data.type
+                    && request.resource.data.createdAt == resource.data.createdAt
+                    && request.resource.data.coins == resource.data.coins
+                    && (!('photoURL' in request.resource.data.keys())
+                        || request.resource.data.photoURL == null
+                        || request.resource.data.photoURL is string);
+
+      // Deleção: só o próprio dono (feature "excluir conta").
+      allow delete: if request.auth != null
+                    && request.auth.uid == userId;
+    }
+
+    // Bloqueia qualquer outra coleção até que rules específicas sejam criadas.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

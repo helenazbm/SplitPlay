@@ -89,7 +89,7 @@ export default function Home() {
               fontSize: "var(--text-fluid-lg)",
             }}
           >
-            Login
+            Criar uma mesa
           </Link>
 
           <Link

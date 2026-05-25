@@ -4,6 +4,7 @@ import AuthField from "@/components/AuthField";
 import EnterButton from "@/components/EnterButton";
 import WaveTop from "@/components/WaveTop";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type SyntheticEvent } from "react";
 
@@ -122,6 +123,19 @@ export default function LoginPage() {
             style={{ marginTop: "var(--spacing-fluid-3)" }}
           />
         </form>
+
+        <p
+          className="font-poppins text-center text-[#64835b]"
+          style={{ fontSize: "var(--text-fluid-sm)" }}
+        >
+          Não tem uma conta?{" "}
+          <Link
+            href="/signup"
+            className="font-medium text-[#418964] underline underline-offset-4 transition hover:text-[#64835b] focus:outline-none focus:ring-2 focus:ring-[#418964]/30 rounded"
+          >
+            Cadastre-se
+          </Link>
+        </p>
       </section>
     </main>
   );

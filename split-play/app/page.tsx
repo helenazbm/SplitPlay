@@ -82,7 +82,7 @@ export default function Home() {
           </Link>
 
           <Link
-            href="/login"
+            href="/login?redirect=/mesa/criar"
             className="flex w-full max-w-[min(16.25rem,72cqi)] items-center justify-center rounded-[10px_10px_25px_10px] bg-white leading-none text-[#64835b] shadow-sm transition hover:bg-[#fffbf0] focus:outline-none focus:ring-2 focus:ring-white/80 focus:ring-offset-2 focus:ring-offset-[#418964]"
             style={{
               height: "var(--height-control-lg)",

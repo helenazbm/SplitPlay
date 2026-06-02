@@ -5,9 +5,10 @@ import EnterButton from "@/components/EnterButton";
 import WaveTop from "@/components/WaveTop";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState, type SyntheticEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, type SyntheticEvent } from "react";
 
+import { useAuth } from "@/lib/contexts/AuthContext";
 import {
   getAuthErrorMessage,
   signInWithEmail,
@@ -15,11 +16,20 @@ import {
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirect") ?? "/perfil";
+  const { user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.replace(redirectTo);
+    }
+  }, [authLoading, user, router, redirectTo]);
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -27,7 +37,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInWithEmail({ email: email.trim(), password });
-      router.push("/perfil");
+      router.push(redirectTo);
     } catch (err) {
       setError(getAuthErrorMessage(err));
       setLoading(false);

@@ -6,12 +6,9 @@ service cloud.firestore {
     // Coleção de usuários: cada doc é privado do dono.
     match /users/{userId} {
 
-      // Leitura: só o próprio dono.
       allow read: if request.auth != null
                   && request.auth.uid == userId;
 
-      // Criação: precisa estar autenticado, doc id == uid e
-      // os campos imutáveis precisam bater com o auth.
       allow create: if request.auth != null
                     && request.auth.uid == userId
                     && request.resource.data.uid == userId
@@ -23,26 +20,75 @@ service cloud.firestore {
                         || request.resource.data.photoURL == null
                         || request.resource.data.photoURL is string);
 
-      // Atualização: só o dono. Campos imutáveis não podem mudar.
-      // `coins` não pode ser editado pelo client (server-side via Cloud Functions / Admin SDK).
-      // `photoURL` é opcional, mas se presente precisa ser string ou null
-      // (URL gerada pelo download do Firebase Storage após upload do avatar).
       allow update: if request.auth != null
                     && request.auth.uid == userId
                     && request.resource.data.uid == resource.data.uid
                     && request.resource.data.type == resource.data.type
                     && request.resource.data.createdAt == resource.data.createdAt
                     && request.resource.data.coins == resource.data.coins
+                    && (
+                      request.resource.data.currentTableId == resource.data.currentTableId
+                      || (
+                        (!('currentTableId' in resource.data)
+                          || resource.data.currentTableId == null)
+                        && request.resource.data.currentTableId is string
+                        && request.resource.data.currentTableId.size() > 0
+                      )
+                    )
                     && (!('photoURL' in request.resource.data.keys())
                         || request.resource.data.photoURL == null
                         || request.resource.data.photoURL is string);
 
-      // Deleção: só o próprio dono (feature "excluir conta").
       allow delete: if request.auth != null
                     && request.auth.uid == userId;
     }
 
-    // Bloqueia qualquer outra coleção até que rules específicas sejam criadas.
+    match /tables/{tableId} {
+      function isAuthenticated() {
+        return request.auth != null;
+      }
+
+      function isTableAdmin() {
+        return isAuthenticated()
+               && resource.data.adminUid == request.auth.uid;
+      }
+
+      // Qualquer usuário autenticado pode ler metadados da mesa (ex.: validar código ao entrar).
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.adminUid == request.auth.uid
+                    && request.resource.data.status == 'aberta'
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() > 0
+                    && request.resource.data.tipSuggested is bool
+                    && request.resource.data.couvertSuggested is number
+                    && request.resource.data.couvertSuggested >= 0;
+
+      allow update: if isTableAdmin()
+                    && request.resource.data.adminUid == resource.data.adminUid
+                    && request.resource.data.status in ['aberta', 'encerrada'];
+
+      match /participants/{participantId} {
+        allow create: if isAuthenticated()
+                      && request.auth.uid == participantId
+                      && request.resource.data.uid == participantId
+                      && request.resource.data.isAnonymous is bool
+                      && request.resource.data.paid == false
+                      && request.resource.data.paidAmount == 0
+                      && request.resource.data.paidAt == null
+                      && request.resource.data.tipEnabled is bool
+                      && get(/databases/$(database)/documents/tables/$(tableId)).data.adminUid == request.auth.uid;
+
+        allow read: if isAuthenticated()
+                    && (
+                      request.auth.uid == participantId
+                      || get(/databases/$(database)/documents/tables/$(tableId)).data.adminUid == request.auth.uid
+                      || exists(/databases/$(database)/documents/tables/$(tableId)/participants/$(request.auth.uid))
+                    );
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

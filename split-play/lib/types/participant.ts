@@ -6,4 +6,5 @@ export type Participant = {
   paid: boolean;
   paidAmount: number;
   paidAt: Date | null;
+  tipEnabled: boolean;
 };

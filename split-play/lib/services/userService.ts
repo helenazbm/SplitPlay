@@ -29,6 +29,17 @@ function requireCurrentUser(): FirebaseUser {
   return current;
 }
 
+export async function getUserDoc(): Promise<User | null> {
+  const current = requireCurrentUser();
+  const snapshot = await getDoc(doc(db, "users", current.uid));
+
+  if (!snapshot.exists()) {
+    return null;
+  }
+
+  return snapshot.data() as User;
+}
+
 export async function ensureUserDoc(
   firebaseUser: FirebaseUser,
   fallbackDisplayName?: string,

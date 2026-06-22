@@ -5,7 +5,7 @@ export type User = {
   type: UserType;
   displayName: string;
   email?: string | null;
-  photoURL?: string | null;
+  avatarUrl?: string | null;
   coins: number;
   ownedItemIds: string[];
   currentTableId: string | null;

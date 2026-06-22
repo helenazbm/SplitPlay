@@ -1,18 +1,25 @@
 import {
   createUserWithEmailAndPassword,
   deleteUser,
+  EmailAuthProvider,
+  linkWithCredential,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   updateProfile,
 } from "firebase/auth";
 
 import { auth } from "@/lib/firebase";
-import { deleteUserData, ensureUserDoc } from "@/lib/services/userService";
+import {
+  deleteUserData,
+  ensureUserDoc,
+  promoteUserToRegistered,
+} from "@/lib/services/userService";
 
 type SignUpInput = {
   email: string;
   password: string;
   displayName: string;
+  avatarUrl?: string | null;
 };
 
 type SignInInput = {
@@ -24,15 +31,42 @@ export async function signUpWithEmail({
   email,
   password,
   displayName,
+  avatarUrl,
 }: SignUpInput) {
   const credential = await createUserWithEmailAndPassword(auth, email, password);
 
-  if (displayName) {
-    await updateProfile(credential.user, { displayName });
+  if (displayName || avatarUrl) {
+    await updateProfile(credential.user, {
+      ...(displayName ? { displayName } : {}),
+      ...(avatarUrl ? { photoURL: avatarUrl } : {}),
+    });
   }
 
-  await ensureUserDoc(credential.user, displayName);
+  await ensureUserDoc(credential.user, displayName, avatarUrl);
   return credential.user;
+}
+
+/**
+ * Converte a conta anônima atual em uma conta registrada (e-mail + senha),
+ * preservando o mesmo uid e todos os dados (mesa atual, participações, etc.).
+ */
+export async function upgradeAnonymousAccount({
+  email,
+  password,
+}: SignInInput) {
+  const current = auth.currentUser;
+  if (!current) {
+    throw new Error("Usuário não autenticado.");
+  }
+  if (!current.isAnonymous) {
+    throw new Error("Esta conta já está registrada.");
+  }
+
+  const credential = EmailAuthProvider.credential(email, password);
+  const result = await linkWithCredential(current, credential);
+
+  await promoteUserToRegistered(result.user);
+  return result.user;
 }
 
 export async function signInWithEmail({ email, password }: SignInInput) {

@@ -1,14 +1,23 @@
 "use client";
 
-import MesaTabBar, { type MesaTabId } from "@/components/mesa/MesaTabBar";
+import MesaBottomNav, { type MesaTabId } from "@/components/mesa/MesaBottomNav";
+import MesaHeader from "@/components/mesa/MesaHeader";
 import MesaAdminTab from "@/components/mesa/tabs/MesaAdminTab";
+import MesaPagamentoTab from "@/components/mesa/tabs/MesaPagamentoTab";
 import MesaParticipantesTab from "@/components/mesa/tabs/MesaParticipantesTab";
 import MesaPedidosTab from "@/components/mesa/tabs/MesaPedidosTab";
 import { useAuth } from "@/lib/contexts/AuthContext";
-import { getTable } from "@/lib/services/tableService";
+import {
+  closeTable,
+  leaveTable,
+  releaseCurrentTable,
+  subscribeToParticipants,
+  subscribeToTable,
+} from "@/lib/services/tableService";
+import type { Participant } from "@/lib/types/participant";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function MesaPainelPage() {
   const router = useRouter();
@@ -17,11 +26,27 @@ export default function MesaPainelPage() {
   const { user, loading: authLoading } = useAuth();
 
   const [tableName, setTableName] = useState<string | null>(null);
+  const [adminUid, setAdminUid] = useState<string | null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<MesaTabId>("pedidos");
+  const [leaving, setLeaving] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [closed, setClosed] = useState(false);
+  const [activeTab, setActiveTab] = useState<MesaTabId>("itens");
 
-  const isAdmin = true;
+  const isAdmin = Boolean(user && adminUid && user.uid === adminUid);
+
+  const participantesView = useMemo(
+    () =>
+      participants.map((participante) => ({
+        uid: participante.uid,
+        displayName: participante.displayName,
+        isAdmin: participante.uid === adminUid,
+        paid: participante.paid,
+      })),
+    [participants, adminUid],
+  );
 
   useEffect(() => {
     if (authLoading) {
@@ -35,41 +60,84 @@ export default function MesaPainelPage() {
 
     let cancelled = false;
 
-    async function loadTable() {
-      try {
-        const table = await getTable(tableId);
+    const unsubscribeTable = subscribeToTable(
+      tableId,
+      (table) => {
         if (cancelled) {
           return;
         }
 
         if (!table) {
           setError("Mesa não encontrada.");
-          return;
-        }
-
-        if (table.status === "encerrada") {
-          setError("Essa mesa foi encerrada.");
+          setLoading(false);
           return;
         }
 
         setTableName(table.name);
-      } catch {
+        setAdminUid(table.adminUid);
+        setLoading(false);
+
+        if (table.status === "encerrada") {
+          setClosed(true);
+        }
+      },
+      () => {
         if (!cancelled) {
           setError("Não foi possível carregar a mesa.");
-        }
-      } finally {
-        if (!cancelled) {
           setLoading(false);
         }
-      }
-    }
+      },
+    );
 
-    void loadTable();
+    const unsubscribeParticipants = subscribeToParticipants(
+      tableId,
+      (list) => {
+        if (!cancelled) {
+          setParticipants(list);
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setError("Não foi possível carregar os participantes.");
+        }
+      },
+    );
 
     return () => {
       cancelled = true;
+      unsubscribeTable();
+      unsubscribeParticipants();
     };
   }, [authLoading, user, router, tableId]);
+
+  // Mesa encerrada: libera o usuário (zera o currentTableId, cada um o seu).
+  useEffect(() => {
+    if (closed) {
+      void releaseCurrentTable().catch(() => {});
+    }
+  }, [closed]);
+
+  async function handleLeave() {
+    setLeaving(true);
+    try {
+      await leaveTable(tableId);
+      router.push("/");
+    } catch {
+      setError("Não foi possível sair da mesa.");
+      setLeaving(false);
+    }
+  }
+
+  async function handleCloseTable() {
+    setClosing(true);
+    try {
+      await closeTable(tableId);
+      // A subscription detecta o status "encerrada" e mostra a tela de encerrada.
+    } catch {
+      setError("Não foi possível encerrar a mesa.");
+      setClosing(false);
+    }
+  }
 
   if (authLoading || loading) {
     return (
@@ -79,6 +147,30 @@ export default function MesaPainelPage() {
           style={{ fontSize: "var(--text-fluid-sm)" }}
         >
           Carregando...
+        </p>
+      </main>
+    );
+  }
+
+  if (closed) {
+    return (
+      <main
+        className="flex min-h-dvh flex-1 flex-col items-center justify-center bg-[#fffbf0]"
+        style={{
+          padding: "var(--spacing-fluid-5)",
+          gap: "var(--spacing-fluid-4)",
+        }}
+      >
+        <i
+          aria-hidden="true"
+          className="pi pi-flag-fill text-[#418964]"
+          style={{ fontSize: "var(--text-fluid-3xl)" }}
+        />
+        <p
+          className="font-poppins text-center text-[#418964]"
+          style={{ fontSize: "var(--text-fluid-base)" }}
+        >
+          A mesa foi encerrada pelo administrador.
         </p>
       </main>
     );
@@ -99,50 +191,16 @@ export default function MesaPainelPage() {
         >
           {error ?? "Mesa não encontrada."}
         </p>
-        <Link
-          href="/"
-          className="font-poppins rounded-[30px] bg-[#418964] px-6 py-3 font-semibold text-white"
-          style={{ fontSize: "var(--text-fluid-sm)" }}
-        >
-          Voltar para home
-        </Link>
       </main>
     );
   }
 
   return (
     <main className="flex min-h-dvh flex-1 flex-col bg-[#fffbf0]">
-      <header
-        className="shrink-0 bg-[#418964]"
-        style={{
-          paddingInline: "var(--spacing-fluid-5)",
-          paddingTop: "var(--spacing-fluid-5)",
-          paddingBottom: "var(--spacing-fluid-4)",
-        }}
-      >
-        <div
-          className="flex items-start justify-between"
-          style={{ gap: "var(--spacing-fluid-3)" }}
-        >
-          <div className="min-w-0">
-            <h1
-              className="font-bagel truncate leading-tight text-white"
-              style={{ fontSize: "var(--text-fluid-2xl)" }}
-            >
-              {tableName}
-            </h1>
-            <p
-              className="font-poppins text-white/90"
-              style={{
-                marginTop: "var(--spacing-fluid-1)",
-                fontSize: "var(--text-fluid-xs)",
-              }}
-            >
-              Código {tableId}
-              {isAdmin ? " · Admin" : ""}
-            </p>
-          </div>
-
+      <MesaHeader
+        userName={user?.displayName?.trim() || "Jogador"}
+        code={tableId}
+        right={
           <Link
             href={`/mesa/${tableId}`}
             aria-label="Ver código e QR Code"
@@ -158,64 +216,40 @@ export default function MesaPainelPage() {
               style={{ fontSize: "var(--text-fluid-base)" }}
             />
           </Link>
-        </div>
-      </header>
+        }
+      />
 
       <section
         className="flex min-h-0 flex-1 flex-col bg-[#fffbf0]"
         style={{
           paddingInline: "var(--spacing-fluid-4)",
           paddingTop: "var(--spacing-fluid-4)",
-          paddingBottom: "var(--spacing-fluid-5)",
+          paddingBottom: "var(--bottom-nav-space)",
           gap: "var(--spacing-fluid-3)",
         }}
       >
-        <div
-          className="flex items-center"
-          style={{ gap: "var(--spacing-fluid-2)" }}
-        >
-          <div className="min-w-0 flex-1">
-            <MesaTabBar
-              activeTab={activeTab}
-              onChange={setActiveTab}
-              showAdmin={isAdmin}
-            />
-          </div>
-
-          {activeTab === "pedidos" ? (
-            <button
-              type="button"
-              aria-label="Adicionar item"
-              className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050]"
-              style={{
-                height: "2rem",
-                paddingInline: "var(--spacing-fluid-3)",
-                fontSize: "var(--text-fluid-xs)",
-                gap: "0.25rem",
-              }}
-            >
-              <i aria-hidden="true" className="pi pi-plus" />
-              Item
-            </button>
-          ) : null}
-        </div>
-
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {activeTab === "pedidos" ? <MesaPedidosTab /> : null}
-          {activeTab === "participantes" ? <MesaParticipantesTab /> : null}
-          {activeTab === "admin" && isAdmin ? (
-            <MesaAdminTab tableName={tableName} />
+          {activeTab === "itens" ? <MesaPedidosTab /> : null}
+          {activeTab === "mesa" ? (
+            <div
+              className="flex flex-col"
+              style={{ gap: "var(--spacing-fluid-4)" }}
+            >
+              <MesaParticipantesTab participantes={participantesView} />
+              {isAdmin ? (
+                <MesaAdminTab
+                  tableName={tableName}
+                  onCloseTable={() => void handleCloseTable()}
+                  closing={closing}
+                />
+              ) : null}
+            </div>
           ) : null}
+          {activeTab === "pagamento" ? <MesaPagamentoTab /> : null}
         </div>
-
-        <Link
-          href="/"
-          className="font-poppins shrink-0 text-center text-[#64835b] underline underline-offset-4"
-          style={{ fontSize: "var(--text-fluid-sm)" }}
-        >
-          Voltar para home
-        </Link>
       </section>
+
+      <MesaBottomNav activeTab={activeTab} onChange={setActiveTab} />
     </main>
   );
 }

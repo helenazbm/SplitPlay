@@ -3,29 +3,63 @@
 import AuthField from "@/components/AuthField";
 import EnterButton from "@/components/EnterButton";
 import WaveTop from "@/components/WaveTop";
+import { useAuth } from "@/lib/contexts/AuthContext";
+import { getAuthErrorMessage } from "@/lib/services/authService";
+import {
+  AlreadyInTableError,
+  getFirestoreErrorMessage,
+  joinTable,
+} from "@/lib/services/tableService";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState, type SyntheticEvent } from "react";
 
+function getJoinErrorMessage(error: unknown): string {
+  if (error instanceof AlreadyInTableError) {
+    return "Você já está em outra mesa. Saia dela antes de entrar em uma nova.";
+  }
+
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "";
+
+  if (code.startsWith("auth/")) {
+    return getAuthErrorMessage(error);
+  }
+
+  return getFirestoreErrorMessage(error);
+}
+
 export default function EntrarMesaPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmed = code.trim();
-    if (!trimmed) return;
+    const trimmedCode = code.trim();
+    if (!trimmedCode) return;
 
     setError(null);
-    setLoading(true);
-    try {
-      router.push(`/mesa/${trimmed}`);
-    } catch {
-      setError("Não foi possível entrar na mesa. Tente novamente.");
-      setLoading(false);
+
+    // Usuário registrado (não anônimo): entra direto na mesa.
+    if (user && !user.isAnonymous) {
+      setLoading(true);
+      try {
+        await joinTable(trimmedCode);
+        router.push(`/mesa/${trimmedCode}/painel`);
+      } catch (err) {
+        setError(getJoinErrorMessage(err));
+        setLoading(false);
+      }
+      return;
     }
+
+    // Visitante: segue para a etapa de identificação (nome anônimo ou login).
+    router.push(`/mesa/entrar/identificacao?code=${encodeURIComponent(trimmedCode)}`);
   }
 
   function handleQrCode() {
@@ -109,8 +143,8 @@ export default function EntrarMesaPage() {
           ) : null}
 
           <EnterButton
-            label={loading ? "Entrando..." : "Entrar"}
-            disabled={loading || !code.trim()}
+            label={loading ? "Entrando..." : "Continuar"}
+            disabled={loading || authLoading || !code.trim()}
             className="self-end"
             style={{ marginTop: "var(--spacing-fluid-3)" }}
           />

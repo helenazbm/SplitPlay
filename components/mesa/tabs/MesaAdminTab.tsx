@@ -5,12 +5,19 @@ import { useState } from "react";
 
 type MesaAdminTabProps = {
   tableName: string;
+  onCloseTable?: () => void;
+  closing?: boolean;
 };
 
-export default function MesaAdminTab({ tableName }: MesaAdminTabProps) {
+export default function MesaAdminTab({
+  tableName,
+  onCloseTable,
+  closing = false,
+}: MesaAdminTabProps) {
   const [couvert, setCouvert] = useState("");
   const [tipSuggested, setTipSuggested] = useState(true);
   const [saved, setSaved] = useState(false);
+  const [confirmingClose, setConfirmingClose] = useState(false);
 
   function handleSave() {
     setSaved(true);
@@ -105,6 +112,81 @@ export default function MesaAdminTab({ tableName }: MesaAdminTabProps) {
         <i aria-hidden="true" className={`pi ${saved ? "pi-check" : "pi-save"}`} />
         {saved ? "Salvo!" : "Salvar configurações"}
       </button>
+
+      {onCloseTable ? (
+        <div
+          className="flex flex-col rounded-[10px_10px_25px_10px] border border-[#c0392b]/40 bg-[#fdecea]"
+          style={{
+            marginTop: "var(--spacing-fluid-2)",
+            padding: "var(--spacing-fluid-4)",
+            gap: "var(--spacing-fluid-3)",
+          }}
+        >
+          <div>
+            <h3
+              className="font-bagel text-[#c0392b]"
+              style={{ fontSize: "var(--text-fluid-base)" }}
+            >
+              Encerrar mesa
+            </h3>
+            <p
+              className="font-poppins text-[#8a3b32]"
+              style={{
+                marginTop: "var(--spacing-fluid-1)",
+                fontSize: "var(--text-fluid-xs)",
+              }}
+            >
+              Todos os participantes serão desconectados. Esta ação não pode ser
+              desfeita.
+            </p>
+          </div>
+
+          {confirmingClose ? (
+            <div
+              className="grid grid-cols-2"
+              style={{ gap: "var(--spacing-fluid-2)" }}
+            >
+              <button
+                type="button"
+                onClick={() => setConfirmingClose(false)}
+                disabled={closing}
+                className="font-poppins flex items-center justify-center rounded-[30px] border border-[#418964] bg-white font-semibold text-[#418964] transition disabled:opacity-60"
+                style={{
+                  height: "var(--height-control-md)",
+                  fontSize: "var(--text-fluid-sm)",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={onCloseTable}
+                disabled={closing}
+                className="font-poppins flex items-center justify-center gap-2 rounded-[30px] bg-[#c0392b] font-semibold text-white transition hover:bg-[#a93226] disabled:opacity-60"
+                style={{
+                  height: "var(--height-control-md)",
+                  fontSize: "var(--text-fluid-sm)",
+                }}
+              >
+                {closing ? "Encerrando..." : "Confirmar"}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingClose(true)}
+              className="font-poppins flex items-center justify-center gap-2 rounded-[30px] border border-[#c0392b] bg-white font-semibold text-[#c0392b] transition hover:bg-[#fdecea]"
+              style={{
+                height: "var(--height-control-md)",
+                fontSize: "var(--text-fluid-sm)",
+              }}
+            >
+              <i aria-hidden="true" className="pi pi-flag-fill" />
+              Encerrar mesa
+            </button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

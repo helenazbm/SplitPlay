@@ -17,7 +17,7 @@ import {
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTo = searchParams.get("redirect") ?? "/perfil";
+  const redirectTo = searchParams.get("redirect") ?? "/inicio";
   const { user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

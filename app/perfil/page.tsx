@@ -1,15 +1,30 @@
 "use client";
 
+import AppHeader from "@/components/app/AppHeader";
+import BottomNav from "@/components/app/BottomNav";
+import AuthField from "@/components/AuthField";
+import WaveTop from "@/components/WaveTop";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
 
 import { useAuth } from "@/lib/contexts/AuthContext";
 import {
   deleteAccount,
   getAuthErrorMessage,
-  signOut,
+  upgradeAnonymousAccount,
 } from "@/lib/services/authService";
 import { updateDisplayName } from "@/lib/services/userService";
+
+function getInitials(name: string) {
+  const initials = name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+  return initials || "?";
+}
 
 export default function PerfilPage() {
   const router = useRouter();
@@ -30,7 +45,12 @@ export default function PerfilPage() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const [signingOut, setSigningOut] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
+  const [savingRegister, setSavingRegister] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,10 +62,7 @@ export default function PerfilPage() {
   if (loading || !user) {
     return (
       <main className="flex min-h-dvh flex-1 items-center justify-center bg-[#418964] text-white">
-        <p
-          className="font-poppins"
-          style={{ fontSize: "var(--text-fluid-sm)" }}
-        >
+        <p className="font-poppins" style={{ fontSize: "var(--text-fluid-sm)" }}>
           Carregando...
         </p>
       </main>
@@ -87,15 +104,23 @@ export default function PerfilPage() {
     }
   }
 
-  async function handleSignOut() {
+  async function handleRegister(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingRegister(true);
     setError(null);
-    setSigningOut(true);
     try {
-      await signOut();
-      router.replace("/");
+      await upgradeAnonymousAccount({
+        email: registerEmail.trim(),
+        password: registerPassword,
+      });
+      // A conta deixa de ser anônima; o card sai de cena automaticamente.
+      setRegistering(false);
+      setRegisterEmail("");
+      setRegisterPassword("");
     } catch (err) {
       setError(getAuthErrorMessage(err));
-      setSigningOut(false);
+    } finally {
+      setSavingRegister(false);
     }
   }
 
@@ -112,209 +137,330 @@ export default function PerfilPage() {
     }
   }
 
-  const busy = signingOut || deleting;
-
   return (
-    <main
-      className="flex min-h-dvh flex-1 flex-col bg-[#418964] text-white"
-      style={{
-        paddingInline: "var(--spacing-fluid-5)",
-        paddingTop: "var(--spacing-fluid-8)",
-        paddingBottom: "var(--spacing-fluid-5)",
-      }}
-    >
-      <h1
-        className="font-bagel text-center leading-tight"
-        style={{ fontSize: "var(--text-fluid-3xl)" }}
-      >
-        Meu perfil
-      </h1>
+    <main className="relative flex min-h-dvh flex-1 flex-col overflow-hidden bg-[#418964]">
+      <AppHeader title="Meu perfil" />
 
       <section
-        className="flex flex-col items-center"
+        className="relative z-0 flex min-h-0 flex-1 flex-col rounded-t-[30px] bg-white"
         style={{
-          marginTop: "var(--spacing-fluid-6)",
-          gap: "var(--spacing-fluid-2)",
+          paddingInline: "var(--spacing-fluid-5)",
+          paddingTop: "var(--spacing-fluid-6)",
+          paddingBottom: "var(--bottom-nav-space)",
+          gap: "var(--spacing-fluid-4)",
         }}
       >
-        {editingName ? (
-          <div
-            className="flex w-full max-w-[min(17.5rem,75cqi)] flex-col items-stretch"
-            style={{ gap: "var(--spacing-fluid-2)" }}
-          >
-            <input
-              type="text"
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              autoFocus
-              maxLength={40}
-              style={{
-                fontSize: "var(--text-fluid-base)",
-                paddingInline: "var(--spacing-fluid-3)",
-                paddingBlock: "var(--spacing-fluid-2)",
-              }}
-              className="font-poppins rounded-lg border border-white/40 bg-white/10 text-center text-white outline-none focus:border-white"
+        <WaveTop />
+
+        <div
+          className="sp-rise flex flex-col items-center"
+          style={{ gap: "var(--spacing-fluid-3)", animationDelay: "60ms" }}
+        >
+          {user.photoURL ? (
+            <Image
+              src={user.photoURL}
+              alt=""
+              width={80}
+              height={80}
+              className="rounded-full border-2 border-[#418964]/15 object-cover"
+              style={{ height: "5rem", width: "5rem" }}
             />
-            <div className="flex" style={{ gap: "var(--spacing-fluid-2)" }}>
-              <button
-                type="button"
-                onClick={cancelEditName}
-                disabled={savingName}
+          ) : (
+            <span
+              className="font-poppins flex items-center justify-center rounded-full border-2 border-[#418964]/15 bg-[#cde9da] font-bold text-[#418964]"
+              style={{
+                height: "5rem",
+                width: "5rem",
+                fontSize: "var(--text-fluid-2xl)",
+              }}
+            >
+              {getInitials(displayName)}
+            </span>
+          )}
+
+          {editingName ? (
+            <div
+              className="flex w-full max-w-[min(18rem,80cqi)] flex-col"
+              style={{ gap: "var(--spacing-fluid-2)" }}
+            >
+              <input
+                type="text"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                autoFocus
+                maxLength={40}
                 style={{
-                  fontSize: "var(--text-fluid-sm)",
+                  fontSize: "var(--text-fluid-base)",
                   paddingInline: "var(--spacing-fluid-3)",
                   paddingBlock: "var(--spacing-fluid-2)",
                 }}
-                className="font-poppins flex-1 rounded-lg border border-white/40 bg-transparent text-white disabled:opacity-60"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={saveName}
-                disabled={savingName}
-                style={{
-                  fontSize: "var(--text-fluid-sm)",
-                  paddingInline: "var(--spacing-fluid-3)",
-                  paddingBlock: "var(--spacing-fluid-2)",
-                }}
-                className="font-poppins flex-1 rounded-lg bg-white font-semibold text-[#418964] disabled:opacity-60"
-              >
-                {savingName ? "Salvando..." : "Salvar"}
-              </button>
+                className="font-poppins rounded-lg border border-[#418964]/40 bg-[#fffbf0] text-center text-[#418964] outline-none focus:border-[#418964]"
+              />
+              <div className="flex" style={{ gap: "var(--spacing-fluid-2)" }}>
+                <button
+                  type="button"
+                  onClick={cancelEditName}
+                  disabled={savingName}
+                  style={{
+                    fontSize: "var(--text-fluid-sm)",
+                    paddingBlock: "var(--spacing-fluid-2)",
+                  }}
+                  className="font-poppins flex-1 rounded-[30px] border border-[#418964]/40 bg-white font-semibold text-[#418964] disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveName()}
+                  disabled={savingName}
+                  style={{
+                    fontSize: "var(--text-fluid-sm)",
+                    paddingBlock: "var(--spacing-fluid-2)",
+                  }}
+                  className="font-poppins flex-1 rounded-[30px] bg-[#418964] font-semibold text-white disabled:opacity-60"
+                >
+                  {savingName ? "Salvando..." : "Salvar"}
+                </button>
+              </div>
             </div>
+          ) : (
+            <button
+              type="button"
+              onClick={startEditName}
+              aria-label="Editar nome"
+              className="font-poppins flex items-center font-semibold text-[#418964]"
+              style={{
+                fontSize: "var(--text-fluid-lg)",
+                gap: "var(--spacing-fluid-2)",
+              }}
+            >
+              <span>{displayName || "Sem nome"}</span>
+              <i
+                aria-hidden="true"
+                className="pi pi-pencil opacity-70"
+                style={{ fontSize: "var(--text-fluid-sm)" }}
+              />
+            </button>
+          )}
+
+          <p
+            className="font-poppins text-[#64835b]"
+            style={{ fontSize: "var(--text-fluid-xs)" }}
+          >
+            {user.email ?? "Conta de convidado"}
+          </p>
+        </div>
+
+        {error ? (
+          <p
+            role="alert"
+            className="font-poppins text-center font-medium text-[#c0392b]"
+            style={{ fontSize: "var(--text-fluid-xs)" }}
+          >
+            {error}
+          </p>
+        ) : null}
+
+        {user.isAnonymous ? (
+          <div
+            className="sp-rise mt-auto flex flex-col rounded-[10px_10px_25px_10px] border border-[#418964]/30 bg-[#eaf6ef]"
+            style={{
+              padding: "var(--spacing-fluid-4)",
+              gap: "var(--spacing-fluid-3)",
+              animationDelay: "160ms",
+            }}
+          >
+            <div>
+              <h3
+                className="font-bagel text-[#418964]"
+                style={{ fontSize: "var(--text-fluid-base)" }}
+              >
+                Criar uma conta
+              </h3>
+              <p
+                className="font-poppins text-[#64835b]"
+                style={{
+                  marginTop: "var(--spacing-fluid-1)",
+                  fontSize: "var(--text-fluid-xs)",
+                }}
+              >
+                Você está como convidado. Registre um e-mail e senha para salvar
+                seu progresso e acessar de qualquer lugar.
+              </p>
+            </div>
+
+            {registering ? (
+              <form
+                onSubmit={(event) => void handleRegister(event)}
+                className="flex flex-col"
+                style={{ gap: "var(--spacing-fluid-3)" }}
+              >
+                <AuthField
+                  label="Email"
+                  name="register-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={registerEmail}
+                  onChange={(e) => setRegisterEmail(e.target.value)}
+                  placeholder="example@gmail.com"
+                  icon={<i aria-hidden="true" className="pi pi-envelope" />}
+                />
+
+                <AuthField
+                  label="Senha"
+                  name="register-password"
+                  type={showRegisterPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  required
+                  minLength={6}
+                  value={registerPassword}
+                  onChange={(e) => setRegisterPassword(e.target.value)}
+                  placeholder="************"
+                  trailing={
+                    <button
+                      type="button"
+                      aria-label={
+                        showRegisterPassword ? "Ocultar senha" : "Mostrar senha"
+                      }
+                      onClick={() => setShowRegisterPassword((v) => !v)}
+                      className="flex h-11 w-11 items-center justify-center rounded-full text-[#b1c1ad] active:bg-[#418964]/10"
+                    >
+                      <i
+                        aria-hidden="true"
+                        className={`pi ${showRegisterPassword ? "pi-eye-slash" : "pi-eye"}`}
+                        style={{ fontSize: "var(--text-fluid-lg)" }}
+                      />
+                    </button>
+                  }
+                />
+
+                <div
+                  className="grid grid-cols-2"
+                  style={{ gap: "var(--spacing-fluid-2)" }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setRegistering(false)}
+                    disabled={savingRegister}
+                    className="font-poppins flex items-center justify-center rounded-[30px] border border-[#418964] bg-white font-semibold text-[#418964] disabled:opacity-60"
+                    style={{
+                      height: "var(--height-control-md)",
+                      fontSize: "var(--text-fluid-sm)",
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingRegister}
+                    className="font-poppins flex items-center justify-center rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050] disabled:opacity-60"
+                    style={{
+                      height: "var(--height-control-md)",
+                      fontSize: "var(--text-fluid-sm)",
+                    }}
+                  >
+                    {savingRegister ? "Criando..." : "Criar conta"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setRegistering(true);
+                }}
+                className="font-poppins flex items-center justify-center gap-2 rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050]"
+                style={{
+                  height: "var(--height-control-md)",
+                  fontSize: "var(--text-fluid-sm)",
+                }}
+              >
+                <i aria-hidden="true" className="pi pi-user-plus" />
+                Criar conta
+              </button>
+            )}
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={startEditName}
-            className="font-poppins flex items-center font-semibold text-white"
-            style={{
-              fontSize: "var(--text-fluid-base)",
-              gap: "var(--spacing-fluid-2)",
-            }}
-            aria-label="Editar nome"
-          >
-            <span>{displayName || "Sem nome"}</span>
-            <i
-              aria-hidden="true"
-              className="pi pi-pencil opacity-80"
-              style={{ fontSize: "var(--text-fluid-sm)" }}
-            />
-          </button>
-        )}
-
-        <p
-          className="font-poppins text-white/80"
-          style={{ fontSize: "var(--text-fluid-xs)" }}
-        >
-          {user.email}
-        </p>
-      </section>
-
-      {error ? (
-        <p
-          role="alert"
-          className="font-poppins text-center font-medium text-[#ffd0d0]"
-          style={{
-            marginTop: "var(--spacing-fluid-4)",
-            fontSize: "var(--text-fluid-xs)",
-          }}
-        >
-          {error}
-        </p>
-      ) : null}
-
-      <div
-        className="mt-auto flex flex-col"
-        style={{ gap: "var(--spacing-fluid-3)" }}
-      >
-        <button
-          type="button"
-          onClick={handleSignOut}
-          disabled={busy}
-          style={{
-            height: "var(--height-control-md)",
-            fontSize: "var(--text-fluid-base)",
-            gap: "var(--spacing-fluid-2)",
-          }}
-          className="font-poppins flex w-full items-center justify-center rounded-[30px] border border-white/40 bg-transparent font-semibold text-white transition hover:bg-white/10 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <i
-            aria-hidden="true"
-            className="pi pi-sign-out"
-            style={{ fontSize: "var(--text-fluid-lg)" }}
-          />
-          <span>{signingOut ? "Saindo..." : "Sair"}</span>
-        </button>
-
-        {confirmingDelete ? (
           <div
-            className="rounded-2xl border border-[#ffd0d0]/40 bg-black/20"
-            style={{ padding: "var(--spacing-fluid-4)" }}
+            className="sp-rise mt-auto flex flex-col rounded-[10px_10px_25px_10px] border border-[#c0392b]/40 bg-[#fdecea]"
+            style={{
+              padding: "var(--spacing-fluid-4)",
+              gap: "var(--spacing-fluid-3)",
+              animationDelay: "160ms",
+            }}
           >
+            <div>
+              <h3
+                className="font-bagel text-[#c0392b]"
+                style={{ fontSize: "var(--text-fluid-base)" }}
+              >
+                Excluir conta
+              </h3>
             <p
-              className="font-poppins text-center text-white"
+              className="font-poppins text-[#8a3b32]"
               style={{
-                marginBottom: "var(--spacing-fluid-3)",
+                marginTop: "var(--spacing-fluid-1)",
                 fontSize: "var(--text-fluid-xs)",
               }}
             >
-              Tem certeza? Essa ação é permanente.
+              Essa ação é permanente e remove seus dados.
             </p>
-            <div className="flex" style={{ gap: "var(--spacing-fluid-2)" }}>
+          </div>
+
+          {confirmingDelete ? (
+            <div
+              className="grid grid-cols-2"
+              style={{ gap: "var(--spacing-fluid-2)" }}
+            >
               <button
                 type="button"
                 onClick={() => setConfirmingDelete(false)}
                 disabled={deleting}
+                className="font-poppins flex items-center justify-center rounded-[30px] border border-[#418964] bg-white font-semibold text-[#418964] disabled:opacity-60"
                 style={{
+                  height: "var(--height-control-md)",
                   fontSize: "var(--text-fluid-sm)",
-                  paddingInline: "var(--spacing-fluid-3)",
-                  paddingBlock: "var(--spacing-fluid-2)",
                 }}
-                className="font-poppins flex-1 rounded-[30px] border border-white/40 bg-transparent text-white disabled:opacity-60"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                onClick={handleDelete}
+                onClick={() => void handleDelete()}
                 disabled={deleting}
+                className="font-poppins flex items-center justify-center rounded-[30px] bg-[#c0392b] font-semibold text-white transition hover:bg-[#a93226] disabled:opacity-60"
                 style={{
+                  height: "var(--height-control-md)",
                   fontSize: "var(--text-fluid-sm)",
-                  paddingInline: "var(--spacing-fluid-3)",
-                  paddingBlock: "var(--spacing-fluid-2)",
                 }}
-                className="font-poppins flex-1 rounded-[30px] bg-[#c44a4a] font-semibold text-white disabled:opacity-60"
               >
-                {deleting ? "Excluindo..." : "Excluir"}
+                {deleting ? "Excluindo..." : "Confirmar"}
               </button>
             </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setConfirmingDelete(true);
+              }}
+              className="font-poppins flex items-center justify-center gap-2 rounded-[30px] border border-[#c0392b] bg-white font-semibold text-[#c0392b] transition hover:bg-[#fdecea]"
+              style={{
+                height: "var(--height-control-md)",
+                fontSize: "var(--text-fluid-sm)",
+              }}
+            >
+              <i aria-hidden="true" className="pi pi-trash" />
+              Excluir conta
+            </button>
+          )}
           </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setError(null);
-              setConfirmingDelete(true);
-            }}
-            disabled={busy}
-            style={{
-              height: "var(--height-control-sm)",
-              fontSize: "var(--text-fluid-sm)",
-              gap: "var(--spacing-fluid-2)",
-            }}
-            className="font-poppins flex w-full items-center justify-center rounded-[30px] bg-transparent font-semibold text-[#ffd0d0] transition hover:bg-white/10 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <i
-              aria-hidden="true"
-              className="pi pi-trash"
-              style={{ fontSize: "var(--text-fluid-base)" }}
-            />
-            <span>Excluir conta</span>
-          </button>
         )}
-      </div>
+      </section>
+
+      <BottomNav />
     </main>
   );
 }

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import {
   Geist,
   Geist_Mono,
@@ -40,6 +40,14 @@ const poppins = Poppins({
 export const metadata: Metadata = {
   title: "SplitPlay",
   description: "Divida contas de mesa de forma simples e divertida.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Sem viewport-fit: "cover" de propósito: mantém o conteúdo dentro da área
+  // segura (abaixo da status bar / acima do home indicator), evitando que o
+  // header e a navbar fiquem por baixo da UI do sistema.
 };
 
 export default function RootLayout({

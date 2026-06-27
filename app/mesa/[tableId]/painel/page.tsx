@@ -20,6 +20,7 @@ export default function MesaPainelPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<MesaTabId>("pedidos");
+  const [showCreateItem, setShowCreateItem] = useState(false);
 
   const isAdmin = true;
 
@@ -186,6 +187,7 @@ export default function MesaPainelPage() {
             <button
               type="button"
               aria-label="Adicionar item"
+              onClick={() => setShowCreateItem(true)}
               className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050]"
               style={{
                 height: "2rem",
@@ -195,13 +197,18 @@ export default function MesaPainelPage() {
               }}
             >
               <i aria-hidden="true" className="pi pi-plus" />
-              Item
+              Adicionar item
             </button>
           ) : null}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {activeTab === "pedidos" ? <MesaPedidosTab /> : null}
+          {activeTab === "pedidos" ? (
+            <MesaPedidosTab
+              isCreateOpen={showCreateItem}
+              onCloseCreate={() => setShowCreateItem(false)}
+            />
+          ) : null}
           {activeTab === "participantes" ? <MesaParticipantesTab /> : null}
           {activeTab === "admin" && isAdmin ? (
             <MesaAdminTab tableName={tableName} />

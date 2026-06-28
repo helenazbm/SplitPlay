@@ -113,25 +113,6 @@ export default function EntrarMesaPage() {
             icon={<i aria-hidden="true" className="pi pi-hashtag" />}
           />
 
-          <button
-            type="button"
-            onClick={handleQrCode}
-            disabled={loading}
-            style={{
-              height: "var(--height-control-md)",
-              fontSize: "var(--text-fluid-base)",
-              gap: "var(--spacing-fluid-2)",
-            }}
-            className="font-poppins flex w-full items-center justify-center rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <span>Acessar com QR Code</span>
-            <i
-              aria-hidden="true"
-              className="pi pi-qrcode"
-              style={{ fontSize: "var(--text-fluid-lg)" }}
-            />
-          </button>
-
           {error ? (
             <p
               role="alert"
@@ -143,7 +124,7 @@ export default function EntrarMesaPage() {
           ) : null}
 
           <EnterButton
-            label={loading ? "Entrando..." : "Continuar"}
+            label={loading ? "Entrando..." : "Entrar"}
             disabled={loading || authLoading || !code.trim()}
             className="self-end"
             style={{ marginTop: "var(--spacing-fluid-3)" }}

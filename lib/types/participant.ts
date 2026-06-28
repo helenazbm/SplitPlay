@@ -8,9 +8,6 @@ export type Participant = {
   paidAmount: number;
   paidAt: Date | null;
   tipEnabled: boolean;
-  /**
-   * Subtotal da parte do participante, em CENTAVOS (itens + couvert, sem
-   * gorjeta). Persistido pelo próprio cliente; base para o pagamento.
-   */
   subtotalCents: number;
+  totalCents: number;
 };

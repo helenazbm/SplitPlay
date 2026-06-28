@@ -74,3 +74,11 @@ export function tipCents(subtotalCents: number, tipPercent: number): number {
   }
   return Math.round((subtotalCents * tipPercent) / 100);
 }
+
+export function userTotalCents(
+  subtotalCents: number,
+  tipPercent: number,
+  tipEnabled: boolean,
+): number {
+  return subtotalCents + (tipEnabled ? tipCents(subtotalCents, tipPercent) : 0);
+}

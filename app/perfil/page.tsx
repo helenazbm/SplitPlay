@@ -54,10 +54,12 @@ export default function PerfilPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!loading && !user) {
+    // Ao sair (signingOut) o redirecionamento é para a home (handleSignOut);
+    // não cair no guard de login.
+    if (!loading && !user && !signingOut) {
       router.replace("/login");
     }
-  }, [loading, user, router]);
+  }, [loading, user, router, signingOut]);
 
   useEffect(() => {
     if (!user) {

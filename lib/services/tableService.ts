@@ -119,6 +119,7 @@ export async function createTable(input: CreateTableInput): Promise<string> {
       paidAt: null,
       tipEnabled: false,
       subtotalCents: 0,
+      totalCents: 0,
     });
 
     await updateDoc(userRef, {
@@ -234,6 +235,7 @@ export async function joinTable(tableId: string): Promise<void> {
     paidAt: null,
     tipEnabled: false,
     subtotalCents: 0,
+    totalCents: 0,
   });
 
   await updateDoc(userRef, {
@@ -310,14 +312,15 @@ export async function closeTable(tableId: string): Promise<void> {
 export async function updateMySubtotal(
   tableId: string,
   subtotalCents: number,
+  totalCents: number,
 ): Promise<void> {
   const current = requireCurrentUser();
-  const value = Number.isFinite(subtotalCents)
-    ? Math.max(0, Math.trunc(subtotalCents))
-    : 0;
+  const clamp = (n: number) =>
+    Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
 
   await updateDoc(doc(db, "tables", tableId, "participants", current.uid), {
-    subtotalCents: value,
+    subtotalCents: clamp(subtotalCents),
+    totalCents: clamp(totalCents),
   });
 }
 
@@ -424,6 +427,8 @@ export function subscribeToParticipants(
           paidAt: data.paidAt?.toDate?.() ?? null,
           tipEnabled: Boolean(data.tipEnabled),
           subtotalCents: (data.subtotalCents as number) ?? 0,
+          totalCents:
+            (data.totalCents as number) ?? (data.subtotalCents as number) ?? 0,
         } satisfies Participant;
       });
       onChange(participants);

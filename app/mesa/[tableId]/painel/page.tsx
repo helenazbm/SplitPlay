@@ -7,7 +7,7 @@ import MesaPagamentoTab from "@/components/mesa/tabs/MesaPagamentoTab";
 import MesaParticipantesTab from "@/components/mesa/tabs/MesaParticipantesTab";
 import MesaPedidosTab from "@/components/mesa/tabs/MesaPedidosTab";
 import { useAuth } from "@/lib/contexts/AuthContext";
-import { userSubtotalCents } from "@/lib/billing";
+import { userSubtotalCents, userTotalCents } from "@/lib/billing";
 import { subscribeToTableItems } from "@/lib/services/itemService";
 import {
   closeTable,
@@ -49,7 +49,7 @@ export default function MesaPainelPage() {
   const isAdmin = Boolean(user && adminUid && user.uid === adminUid);
 
   // Último subtotal persistido, para não regravar o mesmo valor a cada render.
-  const lastSubtotalRef = useRef<number | null>(null);
+  const lastSubtotalRef = useRef<string | null>(null);
 
   const participantesView = useMemo(
     () =>
@@ -160,15 +160,30 @@ export default function MesaPainelPage() {
     }
 
     const subtotal = userSubtotalCents(user.uid, items, couvert);
-    if (lastSubtotalRef.current === subtotal) {
+    // Gorjeta opt-in do próprio usuário (decisão b: total já com a gorjeta).
+    const myTipEnabled =
+      participants.find((p) => p.uid === user.uid)?.tipEnabled ?? false;
+    const total = userTotalCents(subtotal, tipPercent, myTipEnabled);
+
+    const key = `${subtotal}:${total}`;
+    if (lastSubtotalRef.current === key) {
       return;
     }
-    lastSubtotalRef.current = subtotal;
+    lastSubtotalRef.current = key;
 
-    void updateMySubtotal(tableId, subtotal).catch(() => {
+    void updateMySubtotal(tableId, subtotal, total).catch(() => {
       lastSubtotalRef.current = null; // permite nova tentativa
     });
-  }, [user, items, couvert, participants, itemsLoaded, closed, tableId]);
+  }, [
+    user,
+    items,
+    couvert,
+    tipPercent,
+    participants,
+    itemsLoaded,
+    closed,
+    tableId,
+  ]);
 
   async function handleLeave() {
     setLeaving(true);

@@ -40,7 +40,7 @@ export default function SignUpPage() {
         displayName: username.trim(),
         avatarUrl: avatar,
       });
-      router.push("/perfil");
+      router.push("/");
     } catch (err) {
       setError(getAuthErrorMessage(err));
       setLoading(false);

@@ -100,3 +100,15 @@ export function tipCents(subtotalCents: number, tipPercent: number): number {
   }
   return Math.round((subtotalCents * tipPercent) / 100);
 }
+
+/**
+ * Total (em centavos) que o participante paga: subtotal + gorjeta, somente se
+ * ele optou por incluí-la (tipEnabled). Se não optou, é igual ao subtotal.
+ */
+export function userTotalCents(
+  subtotalCents: number,
+  tipPercent: number,
+  tipEnabled: boolean,
+): number {
+  return subtotalCents + (tipEnabled ? tipCents(subtotalCents, tipPercent) : 0);
+}

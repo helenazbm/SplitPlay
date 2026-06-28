@@ -1,11 +1,9 @@
-import AccountChip from "@/components/home/AccountChip";
 import Image from "next/image";
 import Link from "next/link";
 
 export default function Home() {
   return (
     <div className="splitplay-home-pattern relative isolate flex min-h-dvh flex-1 overflow-x-hidden">
-      <AccountChip />
 
       <Link
         href="/sobre"

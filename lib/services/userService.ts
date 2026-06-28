@@ -93,6 +93,18 @@ export async function updateDisplayName(displayName: string) {
   });
 }
 
+export async function updateAvatar(avatarUrl: string | null) {
+  const current = requireCurrentUser();
+  // Vazio = "sem foto": limpa o photoURL/avatarUrl.
+  const value = avatarUrl && avatarUrl.trim() ? avatarUrl : null;
+
+  await updateProfile(current, { photoURL: value });
+  await updateDoc(doc(db, "users", current.uid), {
+    avatarUrl: value,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function deleteUserData(uid: string) {
   await deleteDoc(doc(db, "users", uid));
 }

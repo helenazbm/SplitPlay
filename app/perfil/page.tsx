@@ -1,30 +1,27 @@
 "use client";
 
-import AppHeader from "@/components/app/AppHeader";
-import BottomNav from "@/components/app/BottomNav";
 import AuthField from "@/components/AuthField";
+import EditProfileModal from "@/components/perfil/EditProfileModal";
 import WaveTop from "@/components/WaveTop";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type SyntheticEvent } from "react";
 
+import Avatar from "@/components/Avatar";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import {
   deleteAccount,
   getAuthErrorMessage,
+  signOut,
   upgradeAnonymousAccount,
 } from "@/lib/services/authService";
-import { updateDisplayName } from "@/lib/services/userService";
+import { getMyActiveTable } from "@/lib/services/tableService";
+import { getUserDoc } from "@/lib/services/userService";
 
-function getInitials(name: string) {
-  const initials = name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-  return initials || "?";
-}
+const MENU_ITEMS = [
+  { key: "stats", label: "Estatísticas", icon: "pi-chart-line" },
+  { key: "settings", label: "Configurações", icon: "pi-cog" },
+  { key: "help", label: "Ajuda", icon: "pi-question-circle" },
+] as const;
 
 export default function PerfilPage() {
   const router = useRouter();
@@ -32,15 +29,18 @@ export default function PerfilPage() {
 
   const [syncedUid, setSyncedUid] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
+  const [avatar, setAvatar] = useState<string | null>(null);
+  const [coins, setCoins] = useState<number | null>(null);
+  const [activeTableId, setActiveTableId] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   if (user && user.uid !== syncedUid) {
     setSyncedUid(user.uid);
     setDisplayName(user.displayName ?? "");
+    setAvatar(user.photoURL ?? null);
   }
 
-  const [editingName, setEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState("");
-  const [savingName, setSavingName] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -59,6 +59,66 @@ export default function PerfilPage() {
     }
   }, [loading, user, router]);
 
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+    let cancelled = false;
+    getUserDoc()
+      .then((doc) => {
+        if (!cancelled) {
+          setCoins(doc?.coins ?? 0);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCoins(0);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+    let cancelled = false;
+    getMyActiveTable()
+      .then((result) => {
+        if (!cancelled) {
+          setActiveTableId(result?.id ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setActiveTableId(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  function handleBackToMesa() {
+    if (activeTableId) {
+      router.push(`/mesa/${activeTableId}/painel`);
+    } else {
+      router.back();
+    }
+  }
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    try {
+      await signOut();
+      router.replace("/");
+    } catch {
+      setSigningOut(false);
+    }
+  }
+
   if (loading || !user) {
     return (
       <main className="flex min-h-dvh flex-1 items-center justify-center bg-[#418964] text-white">
@@ -67,41 +127,6 @@ export default function PerfilPage() {
         </p>
       </main>
     );
-  }
-
-  function startEditName() {
-    setError(null);
-    setNameDraft(displayName);
-    setEditingName(true);
-  }
-
-  function cancelEditName() {
-    setEditingName(false);
-    setNameDraft("");
-  }
-
-  async function saveName() {
-    const next = nameDraft.trim();
-    if (!next) {
-      setError("Nome não pode ficar vazio.");
-      return;
-    }
-    if (next === displayName) {
-      cancelEditName();
-      return;
-    }
-
-    setSavingName(true);
-    setError(null);
-    try {
-      await updateDisplayName(next);
-      setDisplayName(next);
-      setEditingName(false);
-    } catch (err) {
-      setError(getAuthErrorMessage(err));
-    } finally {
-      setSavingName(false);
-    }
   }
 
   async function handleRegister(event: SyntheticEvent<HTMLFormElement>) {
@@ -113,7 +138,6 @@ export default function PerfilPage() {
         email: registerEmail.trim(),
         password: registerPassword,
       });
-      // A conta deixa de ser anônima; o card sai de cena automaticamente.
       setRegistering(false);
       setRegisterEmail("");
       setRegisterPassword("");
@@ -138,117 +162,106 @@ export default function PerfilPage() {
   }
 
   return (
-    <main className="relative flex min-h-dvh flex-1 flex-col overflow-hidden bg-[#418964]">
-      <AppHeader title="Meu perfil" />
-
-      <section
-        className="relative z-0 flex min-h-0 flex-1 flex-col rounded-t-[30px] bg-white"
+    <main className="splitplay-home-pattern relative flex min-h-dvh flex-1 flex-col overflow-hidden">
+      {/* Topo verde com o padrão de comidas + botão fechar (volta para a mesa). */}
+      <div
+        className="absolute right-0 top-0 z-40"
         style={{
-          paddingInline: "var(--spacing-fluid-5)",
-          paddingTop: "var(--spacing-fluid-6)",
-          paddingBottom: "var(--bottom-nav-space)",
-          gap: "var(--spacing-fluid-4)",
+          paddingInline: "var(--spacing-fluid-4)",
+          paddingTop: "calc(var(--spacing-fluid-4) + env(safe-area-inset-top))",
         }}
       >
+        <button
+          type="button"
+          onClick={handleBackToMesa}
+          aria-label="Voltar para a mesa"
+          title="Voltar para a mesa"
+          className="flex shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25 active:scale-95"
+          style={{ height: "2.25rem", width: "2.25rem" }}
+        >
+          <i
+            aria-hidden="true"
+            className="pi pi-times"
+            style={{ fontSize: "var(--text-fluid-base)" }}
+          />
+        </button>
+      </div>
+
+      <section
+        className="relative z-20 mt-[clamp(7rem,18dvh,9rem)] flex min-h-0 flex-1 flex-col bg-white"
+        style={{
+          paddingInline: "var(--spacing-fluid-5)",
+          paddingTop: "var(--spacing-fluid-3)",
+          paddingBottom: "calc(var(--spacing-fluid-6) + env(safe-area-inset-bottom))",
+          gap: "var(--spacing-fluid-5)",
+        }}
+      >
+        {/* Onda branca curva sobre o verde, como nas demais telas. */}
         <WaveTop />
 
+        {/* Cabeçalho do perfil: avatar sobre a onda, nome, moedas e ação. */}
         <div
-          className="sp-rise flex flex-col items-center"
-          style={{ gap: "var(--spacing-fluid-3)", animationDelay: "60ms" }}
+          className="sp-rise relative z-40 flex flex-col items-center"
+          style={{
+            gap: "var(--spacing-fluid-3)",
+            marginTop: "calc(-1 * clamp(4.75rem, 20cqi, 6rem))",
+            animationDelay: "60ms",
+          }}
         >
-          {user.photoURL ? (
-            <Image
-              src={user.photoURL}
-              alt=""
-              width={80}
-              height={80}
-              className="rounded-full border-2 border-[#418964]/15 object-cover"
-              style={{ height: "5rem", width: "5rem" }}
-            />
-          ) : (
+          <Avatar
+            name={displayName}
+            avatarUrl={avatar}
+            className="border-4 border-white shadow-[0_10px_24px_rgba(31,43,36,0.2)]"
+            style={{ height: "7rem", width: "7rem" }}
+            textStyle={{ fontSize: "var(--text-fluid-2xl)" }}
+          />
+
+          <h2
+            className="font-poppins text-center font-bold text-[#3f4a43]"
+            style={{ fontSize: "var(--text-fluid-xl)" }}
+          >
+            {displayName || "Sem nome"}
+          </h2>
+
+          <div className="flex items-center" style={{ gap: "var(--spacing-fluid-3)" }}>
             <span
-              className="font-poppins flex items-center justify-center rounded-full border-2 border-[#418964]/15 bg-[#cde9da] font-bold text-[#418964]"
+              className="font-poppins flex items-center rounded-full border border-[#f0d199] bg-[#fdf6e7] font-semibold text-[#d98a2b]"
               style={{
-                height: "5rem",
-                width: "5rem",
-                fontSize: "var(--text-fluid-2xl)",
+                gap: "var(--spacing-fluid-2)",
+                paddingInline: "var(--spacing-fluid-3)",
+                paddingBlock: "var(--spacing-fluid-2)",
+                fontSize: "var(--text-fluid-sm)",
               }}
             >
-              {getInitials(displayName)}
-            </span>
-          )}
-
-          {editingName ? (
-            <div
-              className="flex w-full max-w-[min(18rem,80cqi)] flex-col"
-              style={{ gap: "var(--spacing-fluid-2)" }}
-            >
-              <input
-                type="text"
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                autoFocus
-                maxLength={40}
-                style={{
-                  fontSize: "var(--text-fluid-base)",
-                  paddingInline: "var(--spacing-fluid-3)",
-                  paddingBlock: "var(--spacing-fluid-2)",
-                }}
-                className="font-poppins rounded-lg border border-[#418964]/40 bg-[#fffbf0] text-center text-[#418964] outline-none focus:border-[#418964]"
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/avatars/moeda-icon.svg"
+                alt=""
+                aria-hidden="true"
+                className="object-contain"
+                style={{ height: "1.4rem", width: "1.4rem" }}
               />
-              <div className="flex" style={{ gap: "var(--spacing-fluid-2)" }}>
-                <button
-                  type="button"
-                  onClick={cancelEditName}
-                  disabled={savingName}
-                  style={{
-                    fontSize: "var(--text-fluid-sm)",
-                    paddingBlock: "var(--spacing-fluid-2)",
-                  }}
-                  className="font-poppins flex-1 rounded-[30px] border border-[#418964]/40 bg-white font-semibold text-[#418964] disabled:opacity-60"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveName()}
-                  disabled={savingName}
-                  style={{
-                    fontSize: "var(--text-fluid-sm)",
-                    paddingBlock: "var(--spacing-fluid-2)",
-                  }}
-                  className="font-poppins flex-1 rounded-[30px] bg-[#418964] font-semibold text-white disabled:opacity-60"
-                >
-                  {savingName ? "Salvando..." : "Salvar"}
-                </button>
-              </div>
-            </div>
-          ) : (
+              {coins ?? 0} moedas
+            </span>
+
             <button
               type="button"
-              onClick={startEditName}
-              aria-label="Editar nome"
-              className="font-poppins flex items-center font-semibold text-[#418964]"
+              onClick={() => {
+                setError(null);
+                setEditing(true);
+              }}
+              className="font-poppins flex items-center rounded-full border border-[#418964]/40 bg-white font-semibold text-[#418964] transition hover:bg-[#eaf6ef] active:scale-95"
               style={{
-                fontSize: "var(--text-fluid-lg)",
                 gap: "var(--spacing-fluid-2)",
+                paddingInline: "var(--spacing-fluid-3)",
+                paddingBlock: "var(--spacing-fluid-2)",
+                fontSize: "var(--text-fluid-sm)",
               }}
             >
-              <span>{displayName || "Sem nome"}</span>
-              <i
-                aria-hidden="true"
-                className="pi pi-pencil opacity-70"
-                style={{ fontSize: "var(--text-fluid-sm)" }}
-              />
+              <i aria-hidden="true" className="pi pi-pencil" style={{ fontSize: "var(--text-fluid-sm)" }} />
+              Editar Perfil
             </button>
-          )}
-
-          <p
-            className="font-poppins text-[#64835b]"
-            style={{ fontSize: "var(--text-fluid-xs)" }}
-          >
-            {user.email ?? "Conta de convidado"}
-          </p>
+          </div>
         </div>
 
         {error ? (
@@ -260,6 +273,48 @@ export default function PerfilPage() {
             {error}
           </p>
         ) : null}
+
+        {/* Menu (placeholders visuais por enquanto) */}
+        <nav className="sp-rise flex flex-col" style={{ animationDelay: "120ms" }}>
+          {MENU_ITEMS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className="font-poppins flex items-center border-b border-[#eef0ec] text-left text-[#7a857c] transition hover:text-[#418964] active:scale-[0.99]"
+              style={{
+                gap: "var(--spacing-fluid-3)",
+                paddingBlock: "var(--spacing-fluid-4)",
+              }}
+            >
+              <i aria-hidden="true" className={`pi ${item.icon}`} style={{ fontSize: "var(--text-fluid-lg)" }} />
+              <span className="flex-1" style={{ fontSize: "var(--text-fluid-sm)" }}>
+                {item.label}
+              </span>
+              <i aria-hidden="true" className="pi pi-angle-right opacity-60" style={{ fontSize: "var(--text-fluid-base)" }} />
+            </button>
+          ))}
+
+          {/* Sair: última opção do menu. */}
+          <button
+            type="button"
+            onClick={() => void handleSignOut()}
+            disabled={signingOut}
+            className="font-poppins flex items-center text-left text-[#e5786c] transition hover:text-[#c0392b] active:scale-[0.99] disabled:opacity-60"
+            style={{
+              gap: "var(--spacing-fluid-3)",
+              paddingBlock: "var(--spacing-fluid-4)",
+            }}
+          >
+            <i
+              aria-hidden="true"
+              className={`pi ${signingOut ? "pi-spin pi-spinner" : "pi-sign-out"}`}
+              style={{ fontSize: "var(--text-fluid-lg)" }}
+            />
+            <span className="flex-1" style={{ fontSize: "var(--text-fluid-sm)" }}>
+              {signingOut ? "Saindo..." : "Sair"}
+            </span>
+          </button>
+        </nav>
 
         {user.isAnonymous ? (
           <div
@@ -383,84 +438,67 @@ export default function PerfilPage() {
             )}
           </div>
         ) : (
-          <div
-            className="sp-rise mt-auto flex flex-col rounded-[10px_10px_25px_10px] border border-[#c0392b]/40 bg-[#fdecea]"
-            style={{
-              padding: "var(--spacing-fluid-4)",
-              gap: "var(--spacing-fluid-3)",
-              animationDelay: "160ms",
-            }}
-          >
-            <div>
-              <h3
-                className="font-bagel text-[#c0392b]"
-                style={{ fontSize: "var(--text-fluid-base)" }}
+          <div className="mt-auto flex flex-col items-center" style={{ gap: "var(--spacing-fluid-2)" }}>
+            {confirmingDelete ? (
+              <div
+                className="grid w-full grid-cols-2"
+                style={{ gap: "var(--spacing-fluid-2)" }}
               >
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={deleting}
+                  className="font-poppins flex items-center justify-center rounded-[30px] border border-[#418964] bg-white font-semibold text-[#418964] disabled:opacity-60"
+                  style={{
+                    height: "var(--height-control-md)",
+                    fontSize: "var(--text-fluid-sm)",
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDelete()}
+                  disabled={deleting}
+                  className="font-poppins flex items-center justify-center rounded-[30px] bg-[#c0392b] font-semibold text-white transition hover:bg-[#a93226] disabled:opacity-60"
+                  style={{
+                    height: "var(--height-control-md)",
+                    fontSize: "var(--text-fluid-sm)",
+                  }}
+                >
+                  {deleting ? "Excluindo..." : "Confirmar exclusão"}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setConfirmingDelete(true);
+                }}
+                className="font-poppins flex items-center gap-2 font-semibold text-[#c0392b] transition hover:opacity-80"
+                style={{ fontSize: "var(--text-fluid-sm)", paddingBlock: "var(--spacing-fluid-2)" }}
+              >
+                <i aria-hidden="true" className="pi pi-trash" />
                 Excluir conta
-              </h3>
-            <p
-              className="font-poppins text-[#8a3b32]"
-              style={{
-                marginTop: "var(--spacing-fluid-1)",
-                fontSize: "var(--text-fluid-xs)",
-              }}
-            >
-              Essa ação é permanente e remove seus dados.
-            </p>
-          </div>
-
-          {confirmingDelete ? (
-            <div
-              className="grid grid-cols-2"
-              style={{ gap: "var(--spacing-fluid-2)" }}
-            >
-              <button
-                type="button"
-                onClick={() => setConfirmingDelete(false)}
-                disabled={deleting}
-                className="font-poppins flex items-center justify-center rounded-[30px] border border-[#418964] bg-white font-semibold text-[#418964] disabled:opacity-60"
-                style={{
-                  height: "var(--height-control-md)",
-                  fontSize: "var(--text-fluid-sm)",
-                }}
-              >
-                Cancelar
               </button>
-              <button
-                type="button"
-                onClick={() => void handleDelete()}
-                disabled={deleting}
-                className="font-poppins flex items-center justify-center rounded-[30px] bg-[#c0392b] font-semibold text-white transition hover:bg-[#a93226] disabled:opacity-60"
-                style={{
-                  height: "var(--height-control-md)",
-                  fontSize: "var(--text-fluid-sm)",
-                }}
-              >
-                {deleting ? "Excluindo..." : "Confirmar"}
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setConfirmingDelete(true);
-              }}
-              className="font-poppins flex items-center justify-center gap-2 rounded-[30px] border border-[#c0392b] bg-white font-semibold text-[#c0392b] transition hover:bg-[#fdecea]"
-              style={{
-                height: "var(--height-control-md)",
-                fontSize: "var(--text-fluid-sm)",
-              }}
-            >
-              <i aria-hidden="true" className="pi pi-trash" />
-              Excluir conta
-            </button>
-          )}
+            )}
           </div>
         )}
       </section>
 
-      <BottomNav />
+      {editing ? (
+        <EditProfileModal
+          onClose={() => setEditing(false)}
+          currentName={displayName}
+          currentAvatar={avatar ?? ""}
+          isAnonymous={user.isAnonymous}
+          onSaved={({ name, avatar: nextAvatar }) => {
+            setDisplayName(name);
+            setAvatar(nextAvatar);
+          }}
+        />
+      ) : null}
     </main>
   );
 }

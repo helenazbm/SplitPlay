@@ -97,8 +97,8 @@ export async function createTable(input: CreateTableInput): Promise<string> {
     await setDoc(tableRef, {
       adminUid: current.uid,
       name: trimmedName,
-      tipSuggested: false,
-      couvertSuggested: 0,
+      tipPercent: input.tipPercent ?? 10,
+      couvertSuggested: input.couvertSuggested ?? 0,
       status: "aberta",
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -110,12 +110,15 @@ export async function createTable(input: CreateTableInput): Promise<string> {
         (userData.displayName as string | undefined) ??
         current.displayName ??
         "Jogador",
+      avatarUrl:
+        (userData.avatarUrl as string | null | undefined) ?? current.photoURL ?? null,
       isAnonymous: false,
       joinedAt: serverTimestamp(),
       paid: false,
       paidAmount: 0,
       paidAt: null,
       tipEnabled: false,
+      subtotalCents: 0,
     });
 
     await updateDoc(userRef, {
@@ -222,12 +225,15 @@ export async function joinTable(tableId: string): Promise<void> {
   await setDoc(participantRef, {
     uid: current.uid,
     displayName,
+    avatarUrl:
+      (userData?.avatarUrl as string | null | undefined) ?? current.photoURL ?? null,
     isAnonymous: current.isAnonymous,
     joinedAt: serverTimestamp(),
     paid: false,
     paidAmount: 0,
     paidAt: null,
     tipEnabled: false,
+    subtotalCents: 0,
   });
 
   await updateDoc(userRef, {
@@ -297,6 +303,69 @@ export async function closeTable(tableId: string): Promise<void> {
 }
 
 /**
+ * Persiste o subtotal (em centavos) do participante atual no doc dele. Cálculo
+ * interino feito pelo próprio cliente (lib/billing); futuramente será
+ * substituído por cálculo autoritativo no servidor.
+ */
+export async function updateMySubtotal(
+  tableId: string,
+  subtotalCents: number,
+): Promise<void> {
+  const current = requireCurrentUser();
+  const value = Number.isFinite(subtotalCents)
+    ? Math.max(0, Math.trunc(subtotalCents))
+    : 0;
+
+  await updateDoc(doc(db, "tables", tableId, "participants", current.uid), {
+    subtotalCents: value,
+  });
+}
+
+/**
+ * Atualiza as configurações da mesa (couvert artístico e gorjeta sugerida em %).
+ * Só o admin consegue (garantido pelas security rules). O couvert é por pessoa e
+ * a gorjeta é uma sugestão opcional para cada participante.
+ */
+export async function updateTableSettings(
+  tableId: string,
+  settings: { couvertSuggested: number; tipPercent: number },
+): Promise<void> {
+  const couvert = Number.isFinite(settings.couvertSuggested)
+    ? Math.max(0, settings.couvertSuggested)
+    : 0;
+  const tipPercent = Number.isFinite(settings.tipPercent)
+    ? Math.max(0, settings.tipPercent)
+    : 0;
+
+  await updateDoc(doc(db, "tables", tableId), {
+    couvertSuggested: couvert,
+    tipPercent,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Transfere a administração da mesa para outro participante. Só o admin atual
+ * consegue (garantido pelas security rules) e o novo admin precisa já ser
+ * participante. O antigo admin permanece na mesa como participante comum.
+ */
+export async function transferAdmin(
+  tableId: string,
+  newAdminUid: string,
+): Promise<void> {
+  const current = requireCurrentUser();
+
+  if (!newAdminUid || newAdminUid === current.uid) {
+    return;
+  }
+
+  await updateDoc(doc(db, "tables", tableId), {
+    adminUid: newAdminUid,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
  * Libera o usuário atual da mesa (zera o currentTableId) sem apagar seu doc de
  * participante. Usado quando a mesa é encerrada.
  */
@@ -347,12 +416,14 @@ export function subscribeToParticipants(
         return {
           uid: data.uid as string,
           displayName: data.displayName as string,
+          avatarUrl: (data.avatarUrl as string | null | undefined) ?? null,
           isAnonymous: Boolean(data.isAnonymous),
           joinedAt: data.joinedAt?.toDate?.() ?? new Date(),
           paid: Boolean(data.paid),
           paidAmount: (data.paidAmount as number) ?? 0,
           paidAt: data.paidAt?.toDate?.() ?? null,
           tipEnabled: Boolean(data.tipEnabled),
+          subtotalCents: (data.subtotalCents as number) ?? 0,
         } satisfies Participant;
       });
       onChange(participants);

@@ -16,8 +16,8 @@ export default function MesaPagamentoTab() {
         style={{ fontSize: "var(--text-fluid-3xl)" }}
       />
       <h2
-        className="font-bagel text-[#418964]"
-        style={{ fontSize: "var(--text-fluid-lg)" }}
+        className="font-poppins font-black text-[#418964]"
+        style={{ fontSize: "20px" }}
       >
         Pagamento
       </h2>

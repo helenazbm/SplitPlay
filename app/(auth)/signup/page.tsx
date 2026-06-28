@@ -13,10 +13,10 @@ import {
 } from "@/lib/services/authService";
 
 const AVATAR_OPTIONS = [
-  "/avatars/avatar-1.svg",
-  "/avatars/avatar-2.svg",
-  "/avatars/avatar-3.svg",
-  "/avatars/avatar-4.svg",
+  "/avatars/avatar-1.png",
+  "/avatars/avatar-2.png",
+  "/avatars/avatar-3.png",
+  "/avatars/avatar-4.png",
 ];
 
 export default function SignUpPage() {

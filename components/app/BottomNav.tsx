@@ -10,8 +10,8 @@ const ITEM_BASE =
   "font-poppins flex flex-1 flex-col items-center justify-center gap-1 rounded-[16px] transition active:scale-95";
 
 /**
- * Navbar inferior flutuante das telas internas: Início (mesa ativa),
- * Mesa (mesa atual) e Perfil. Alinhado à largura do app shell (420px).
+ * Navbar inferior flutuante das telas internas: Mesa (mesa atual)
+ * e Perfil. Alinhado à largura do app shell (420px).
  */
 export default function BottomNav() {
   const pathname = usePathname();
@@ -63,13 +63,6 @@ export default function BottomNav() {
   }, [user, pathname]);
 
   const items = [
-    {
-      key: "home",
-      label: "Início",
-      icon: "pi-home",
-      href: "/inicio",
-      active: pathname === "/inicio",
-    },
     {
       key: "mesa",
       label: "Mesa",

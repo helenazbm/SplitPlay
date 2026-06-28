@@ -5,6 +5,7 @@ import {
   linkWithCredential,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
+  updatePassword,
   updateProfile,
 } from "firebase/auth";
 
@@ -73,6 +74,21 @@ export async function signInWithEmail({ email, password }: SignInInput) {
   const credential = await signInWithEmailAndPassword(auth, email, password);
   await ensureUserDoc(credential.user);
   return credential.user;
+}
+
+/**
+ * Altera a senha da conta registrada atual. O Firebase pode exigir login
+ */
+export async function updateUserPassword(newPassword: string) {
+  const current = auth.currentUser;
+  if (!current) {
+    throw new Error("Usuário não autenticado.");
+  }
+  if (current.isAnonymous) {
+    throw new Error("Conta de convidado não possui senha.");
+  }
+
+  await updatePassword(current, newPassword);
 }
 
 export async function signOut() {

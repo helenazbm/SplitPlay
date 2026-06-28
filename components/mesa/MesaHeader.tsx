@@ -1,3 +1,4 @@
+import AccountChip from "@/components/home/AccountChip";
 import LogoutButton from "@/components/app/LogoutButton";
 import type { ReactNode } from "react";
 
@@ -50,21 +51,28 @@ export default function MesaHeader({ userName, code, right }: MesaHeaderProps) {
       />
 
       <div className="relative z-10 flex flex-col">
-        <div
-          className="flex items-center justify-end"
-          style={{ gap: "var(--spacing-fluid-2)" }}
-        >
-          {right}
-          <LogoutButton />
-        </div>
 
         <div className="min-w-0" style={{ marginTop: "var(--spacing-fluid-4)" }}>
-          <h1
-            className="font-bagel truncate leading-tight text-white"
-            style={{ fontSize: "var(--text-fluid-2xl)" }}
+          <div
+            className="flex items-center justify-between"
+            style={{ gap: "var(--spacing-fluid-2)" }}
           >
-            Olá, {userName}!
-          </h1>
+            <h1
+              className="font-bagel truncate leading-tight text-white"
+              style={{ fontSize: "var(--text-fluid-2xl)" }}
+            >
+              Olá, {userName}!
+            </h1>
+
+            <div
+              className="shrink-0 flex items-center"
+              style={{ gap: "var(--spacing-fluid-2)" }}
+            >
+              {right}
+              <AccountChip variant="inline" />
+            </div>
+          </div>
+
           <p
             className="font-poppins text-white"
             style={{

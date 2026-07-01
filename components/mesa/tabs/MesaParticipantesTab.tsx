@@ -2,6 +2,7 @@
 
 import { centsToReais } from "@/lib/billing";
 import { useState } from "react";
+import ParticipantsComandaCard from "../ParticipantsCard";
 
 const brl = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -18,9 +19,7 @@ export type MesaParticipanteView = {
 
 type MesaParticipantesTabProps = {
   participantes?: MesaParticipanteView[];
-  /** O usuário atual é o admin da mesa? Habilita a transferência de administração. */
   currentUserIsAdmin?: boolean;
-  /** Atribui a administração da mesa ao participante informado. */
   onAssignAdmin?: (uid: string) => void | Promise<void>;
 };
 
@@ -43,7 +42,6 @@ export default function MesaParticipantesTab({
   const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Admin pode modificar os participantes que ainda não são o administrador.
   const canManage = currentUserIsAdmin && Boolean(onAssignAdmin);
 
   function openModal(participante: MesaParticipanteView) {
@@ -52,17 +50,13 @@ export default function MesaParticipantesTab({
   }
 
   function closeModal() {
-    if (assigning) {
-      return;
-    }
+    if (assigning) return;
     setSelected(null);
     setError(null);
   }
 
   async function handleAssign() {
-    if (!selected || !onAssignAdmin) {
-      return;
-    }
+    if (!selected || !onAssignAdmin) return;
 
     setAssigning(true);
     setError(null);
@@ -110,7 +104,10 @@ export default function MesaParticipantesTab({
           Nenhum participante na mesa ainda.
         </p>
       ) : (
-        <ul className="flex flex-col" style={{ gap: "var(--spacing-fluid-2)" }}>
+        <ul
+          className="flex list-none flex-col"
+          style={{ gap: "var(--spacing-fluid-2)" }}
+        >
           {participantes.map((participante) => {
             const clickable = canManage && !participante.isAdmin;
 
@@ -253,87 +250,81 @@ function ParticipanteRow({
   onClick,
 }: ParticipanteRowProps) {
   const content = (
-    <>
-      <div
-        className="flex min-w-0 items-center"
-        style={{ gap: "var(--spacing-fluid-3)" }}
-      >
-        <span
-          className="flex shrink-0 items-center justify-center rounded-full bg-[#418964] font-poppins font-semibold text-white"
-          style={{
-            height: "2.5rem",
-            width: "2.5rem",
-            fontSize: "var(--text-fluid-xs)",
-          }}
-        >
-          {getInitials(participante.displayName)}
-        </span>
-        <div className="min-w-0">
-          <p
-            className="font-poppins truncate font-semibold text-[#418964]"
-            style={{ fontSize: "var(--text-fluid-sm)" }}
+    <ParticipantsComandaCard size="sm">
+      <div className="flex flex-col h-full">
+        {/* Parte de cima */}
+        <div className="flex items-center justify-between px-4 py-3">
+          <div
+            className="flex min-w-0 items-center"
+            style={{ gap: "var(--spacing-fluid-3)" }}
           >
-            {participante.displayName}
-            {participante.isAdmin ? (
-              <span
-                className="ml-2 inline-flex rounded-full bg-[#fdebd0] px-2 py-0.5 font-medium text-[#8a6d3b]"
-                style={{ fontSize: "0.65rem" }}
-              >
-                Admin
-              </span>
-            ) : null}
-          </p>
-        </div>
-      </div>
+            <span
+              className="flex shrink-0 items-center justify-center rounded-full bg-[#418964] font-poppins font-semibold text-white"
+              style={{
+                height: "2.5rem",
+                width: "2.5rem",
+                fontSize: "var(--text-fluid-xs)",
+              }}
+            >
+              {getInitials(participante.displayName)}
+            </span>
 
-      <div
-        className="flex shrink-0 items-center"
-        style={{ gap: "var(--spacing-fluid-2)" }}
-      >
-        <div className="flex flex-col items-end" style={{ gap: "0.25rem" }}>
-          {typeof participante.subtotalCents === "number" ? (
+            <div className="min-w-0">
+              <p
+                className="font-poppins truncate font-semibold text-[#418964]"
+                style={{ fontSize: "var(--text-fluid-sm)" }}
+              >
+                {participante.displayName}
+              </p>
+
+              <p
+                className="font-poppins text-[#8B8B8B]"
+                style={{ fontSize: "0.8rem" }}
+              >
+                {participante.isAdmin ? "Administrador" : "Participante"}
+              </p>
+            </div>
+          </div>
+
+          {typeof participante.subtotalCents === "number" && (
             <strong
-              className="font-poppins text-[#418964]"
-              style={{ fontSize: "var(--text-fluid-sm)" }}
+              className="font-poppins font-bold text-[#E58A85]"
+              style={{ fontSize: "1.5rem" }}
             >
               {brl.format(centsToReais(participante.subtotalCents))}
             </strong>
-          ) : null}
+          )}
+        </div>
+
+        {/* Divisor */}
+        <div className="h-px bg-[#BCD0C3]" />
+
+        {/* Parte de baixo */}
+        <div className="flex items-center justify-between px-4 py-2">
           <span
-            className={`font-poppins rounded-full px-2 py-1 font-semibold ${
+            className="font-poppins text-[#7B7B7B]"
+            style={{ fontSize: "0.85rem" }}
+          >
+            Status da Conta:
+          </span>
+
+          <span
+            className={`font-poppins font-semibold ${
               participante.paid
-                ? "bg-[#cde9da] text-[#418964]"
-                : "bg-[#fdebd0] text-[#8a6d3b]"
+                ? "text-[#5B9A7A]"
+                : "text-[#D39A44]"
             }`}
-            style={{ fontSize: "0.65rem" }}
+            style={{ fontSize: "0.85rem" }}
           >
             {participante.paid ? "Pago" : "Pendente"}
           </span>
         </div>
-        {clickable ? (
-          <i
-            aria-hidden="true"
-            className="pi pi-pencil text-[#9bb0a4]"
-            style={{ fontSize: "var(--text-fluid-xs)" }}
-          />
-        ) : null}
       </div>
-    </>
+    </ParticipantsComandaCard>
   );
 
-  const baseClass =
-    "flex w-full items-center justify-between rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white text-left";
-  const baseStyle = {
-    padding: "var(--spacing-fluid-3)",
-    gap: "var(--spacing-fluid-3)",
-  };
-
   if (!clickable) {
-    return (
-      <div className={baseClass} style={baseStyle}>
-        {content}
-      </div>
-    );
+    return <div>{content}</div>;
   }
 
   return (
@@ -341,8 +332,7 @@ function ParticipanteRow({
       type="button"
       onClick={onClick}
       aria-label={`Modificar ${participante.displayName}`}
-      className={`${baseClass} transition hover:border-[#418964]/50 active:scale-[0.99]`}
-      style={baseStyle}
+      className="transition active:scale-[0.99]"
     >
       {content}
     </button>

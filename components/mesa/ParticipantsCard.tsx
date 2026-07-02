@@ -10,17 +10,18 @@ type ComandaCardProps = {
 
 const WIDTH = 370;
 const HEIGHT = 121;
-const TOOTH = 10;
-const TEETH_COUNT = Math.ceil(WIDTH / TOOTH);
+const TOOTH_WIDTH = 10;
+const TOOTH_HEIGHT = 5;
+const TEETH_COUNT = Math.ceil(WIDTH / TOOTH_WIDTH);
 
 function buildJaggedPath() {
-  let d = `M0,0 L${WIDTH},0 L${WIDTH},${HEIGHT - TOOTH} `;
+  let d = `M0,0 L${WIDTH},0 L${WIDTH},${HEIGHT - TOOTH_HEIGHT} `;
 
   let x = WIDTH;
   let goingDown = true;
   for (let i = 0; i < TEETH_COUNT; i++) {
-    const nextX = x - TOOTH;
-    const y = goingDown ? HEIGHT : HEIGHT - TOOTH;
+    const nextX = x - TOOTH_WIDTH;
+    const y = goingDown ? HEIGHT : HEIGHT - TOOTH_HEIGHT;
     d += `L${nextX},${y} `;
     x = nextX;
     goingDown = !goingDown;
@@ -39,16 +40,16 @@ export default function ParticipantsComandaCard({
     <div
       className={`relative ${className}`}
       style={{
-        width: WIDTH,
-        height: HEIGHT,
+        width: "370px",
+        height: "121px",
         ...style,
       }}
     >
       {/* fundo com recorte serrilhado */}
       <svg
-        width={WIDTH}
-        height={HEIGHT}
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        width={"370px"}
+        height={"121px"}
+        viewBox={`0 0 370px 121px`}
         preserveAspectRatio="none"
         className="absolute inset-0 block"
       >

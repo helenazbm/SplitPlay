@@ -2,6 +2,7 @@
 
 import { centsToReais } from "@/lib/billing";
 import { useState } from "react";
+import Image from "next/image";
 import ParticipantsComandaCard from "../ParticipantsCard";
 
 const brl = new Intl.NumberFormat("pt-BR", {
@@ -11,6 +12,7 @@ const brl = new Intl.NumberFormat("pt-BR", {
 
 export type MesaParticipanteView = {
   uid: string;
+  avatarUrl: string | null;
   displayName: string;
   isAdmin: boolean;
   paid: boolean;
@@ -252,74 +254,88 @@ function ParticipanteRow({
   const content = (
     <ParticipantsComandaCard size="sm">
       <div className="flex flex-col h-full">
-        {/* Parte de cima */}
-        <div className="flex items-center justify-between px-4 py-3">
-          <div
-            className="flex min-w-0 items-center"
-            style={{ gap: "17px" }}
-          >
-            <span
-              className="flex shrink-0 items-center justify-center rounded-full bg-[#5B9A7A] font-poppins font-semibold text-white"
-              style={{
-                height: "2.5rem",
-                width: "2.5rem",
-                fontSize: "var(--text-fluid-xs)",
-              }}
-            >
-              {getInitials(participante.displayName)}
-            </span>
+  {/* Parte de cima */}
+  <div
+    className="flex items-center justify-between px-4"
+    style={{ height: "80px" }}
+  >
+    <div
+      className="flex min-w-0 items-center"
+      style={{ gap: "17px" }}
+    >
+      <span
+        className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#5B9A7A] font-poppins font-semibold text-white"
+        style={{
+          height: "56px",
+          width: "56px",
+          fontSize: "var(--text-fluid-xs)",
+        }}
+      >
+        {participante.avatarUrl ? (
+          <Image
+            src={participante.avatarUrl}
+            alt={participante.displayName}
+            width={52}
+            height={52}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          getInitials(participante.displayName)
+        )}
+      </span>
 
-            <div className="min-w-0 flex flex-col" style={{ gap: "6.09px" }}>
-              <p
-                className="font-poppins font-medium leading-none tracking-normal text-[#5B9A7A] truncate"
-                style={{ fontSize: "18px" }}
-              >
-                {participante.displayName}
-              </p>
+      <div className="min-w-0 flex flex-col" style={{ gap: "6.09px" }}>
+        <p
+          className="font-poppins font-medium leading-none tracking-normal text-[#5B9A7A] truncate"
+          style={{ fontSize: "18px" }}
+        >
+          {participante.displayName}
+        </p>
 
-              <p
-                className="font-poppins font-normal leading-none tracking-normal text-[#8B8B8B]"
-                style={{ fontSize: "12px" }}
-              >
-                {participante.isAdmin ? "Administrador" : "Participante"}
-              </p>
-            </div>
-          </div>
-
-          {typeof participante.subtotalCents === "number" && (
-            <strong
-              className="font-poppins font-bold text-[#E58A85]"
-              style={{ fontSize: "1.5rem" }}
-            >
-              {brl.format(centsToReais(participante.subtotalCents))}
-            </strong>
-          )}
-        </div>
-
-        {/* Divisor */}
-        <div className="h-px bg-[#BCD0C3]" />
-
-        {/* Parte de baixo */}
-        <div className="flex items-center gap-2 px-4 py-2">
-          <span
-            className="font-poppins text-[#7B7B7B]"
-            style={{ fontSize: "12px" }}
-          >
-            Status da Conta:
-          </span>
-
-          <span
-            className={`font-poppins ${
-              participante.paid
-                ? " text-[#5B9A7A]"
-                : " text-[#E58A85]"
-            }`}
-            style={{ fontSize: "12px" }}
-          >
-            {participante.paid ? "Pago" : "Pendente de pagamento"}
-          </span>
-        </div>
+        <p
+          className="font-poppins font-normal leading-none tracking-normal text-[#8B8B8B]"
+          style={{ fontSize: "12px" }}
+        >
+          {participante.isAdmin ? "Administrador" : "Participante"}
+        </p>
       </div>
+    </div>
+
+    {typeof participante.subtotalCents === "number" && (
+      <strong
+        className="font-poppins font-bold text-[#E58A85]"
+        style={{ fontSize: "1.5rem" }}
+      >
+        {brl.format(centsToReais(participante.subtotalCents))}
+      </strong>
+    )}
+  </div>
+
+  {/* Divisor */}
+  <div className="h-px bg-[#BCD0C3]" />
+
+  {/* Parte de baixo */}
+  <div
+    className="flex items-center gap-2 px-4"
+    style={{ height: "30px" }}
+  >
+    <span
+      className="font-poppins text-[#7B7B7B]"
+      style={{ fontSize: "12px" }}
+    >
+      Status da Conta:
+    </span>
+
+    <span
+      className={`font-poppins ${
+        participante.paid ? "text-[#5B9A7A]" : "text-[#E58A85]"
+      }`}
+      style={{ fontSize: "12px" }}
+    >
+      {participante.paid ? "Pago" : "Pendente de pagamento"}
+    </span>
+  </div>
+</div>
     </ParticipantsComandaCard>
   );
 

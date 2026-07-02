@@ -81,7 +81,7 @@ export default function MesaParticipantesTab({
         style={{ gap: "var(--spacing-fluid-2)" }}
       >
         <h2
-          className="font-poppins font-black text-[#418964]"
+          className="font-poppins font-black text-[#E58A85]"
           style={{ fontSize: "20px" }}
         >
           Participantes
@@ -179,7 +179,7 @@ export default function MesaParticipantesTab({
               </span>
               <div className="min-w-0">
                 <p
-                  className="font-poppins truncate font-semibold text-[#418964]"
+                  className="font-poppins truncate font-semibold text-[#5B9A7A]"
                   style={{ fontSize: "var(--text-fluid-sm)" }}
                 >
                   {selected.displayName}
@@ -256,10 +256,10 @@ function ParticipanteRow({
         <div className="flex items-center justify-between px-4 py-3">
           <div
             className="flex min-w-0 items-center"
-            style={{ gap: "var(--spacing-fluid-3)" }}
+            style={{ gap: "17px" }}
           >
             <span
-              className="flex shrink-0 items-center justify-center rounded-full bg-[#418964] font-poppins font-semibold text-white"
+              className="flex shrink-0 items-center justify-center rounded-full bg-[#5B9A7A] font-poppins font-semibold text-white"
               style={{
                 height: "2.5rem",
                 width: "2.5rem",
@@ -269,17 +269,17 @@ function ParticipanteRow({
               {getInitials(participante.displayName)}
             </span>
 
-            <div className="min-w-0">
+            <div className="min-w-0 flex flex-col" style={{ gap: "6.09px" }}>
               <p
-                className="font-poppins truncate font-semibold text-[#418964]"
-                style={{ fontSize: "var(--text-fluid-sm)" }}
+                className="font-poppins font-medium leading-none tracking-normal text-[#5B9A7A] truncate"
+                style={{ fontSize: "18px" }}
               >
                 {participante.displayName}
               </p>
 
               <p
-                className="font-poppins text-[#8B8B8B]"
-                style={{ fontSize: "0.8rem" }}
+                className="font-poppins font-normal leading-none tracking-normal text-[#8B8B8B]"
+                style={{ fontSize: "12px" }}
               >
                 {participante.isAdmin ? "Administrador" : "Participante"}
               </p>
@@ -300,23 +300,23 @@ function ParticipanteRow({
         <div className="h-px bg-[#BCD0C3]" />
 
         {/* Parte de baixo */}
-        <div className="flex items-center justify-between px-4 py-2">
+        <div className="flex items-center gap-2 px-4 py-2">
           <span
             className="font-poppins text-[#7B7B7B]"
-            style={{ fontSize: "0.85rem" }}
+            style={{ fontSize: "12px" }}
           >
             Status da Conta:
           </span>
 
           <span
-            className={`font-poppins font-semibold ${
+            className={`font-poppins ${
               participante.paid
-                ? "text-[#5B9A7A]"
-                : "text-[#D39A44]"
+                ? " text-[#5B9A7A]"
+                : " text-[#E58A85]"
             }`}
-            style={{ fontSize: "0.85rem" }}
+            style={{ fontSize: "12px" }}
           >
-            {participante.paid ? "Pago" : "Pendente"}
+            {participante.paid ? "Pago" : "Pendente de pagamento"}
           </span>
         </div>
       </div>

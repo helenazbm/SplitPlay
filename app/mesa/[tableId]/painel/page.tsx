@@ -56,6 +56,7 @@ export default function MesaPainelPage() {
       participants.map((participante) => ({
         uid: participante.uid,
         displayName: participante.displayName,
+        avatarUrl: participante.avatarUrl,
         isAdmin: participante.uid === adminUid,
         paid: participante.paid,
         subtotalCents: participante.subtotalCents,

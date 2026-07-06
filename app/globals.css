@@ -2,8 +2,12 @@
 @import "primeicons/primeicons.css";
 
 :root {
-  --background: #fffbf0;
+  --background: #ffffff;
   --foreground: #1f2b24;
+
+  --bottom-nav-height: calc(6rem + env(safe-area-inset-bottom));
+
+  --bottom-nav-space: calc(var(--bottom-nav-height) + var(--spacing-fluid-4));
 }
 
 @theme inline {
@@ -65,4 +69,28 @@ body {
    Without this, cqi falls back to 0 and clamp pins to the min value. */
 .app-shell {
   container-type: inline-size;
+}
+
+/* Staggered entrance for the home dashboard — subtle rise + fade. */
+@keyframes splitplay-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sp-rise {
+  opacity: 0;
+  animation: splitplay-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-rise {
+    opacity: 1;
+    animation: none;
+  }
 }

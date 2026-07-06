@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import {
   Geist,
   Geist_Mono,
@@ -33,13 +33,21 @@ const bagel = Bagel_Fat_One({
 
 const poppins = Poppins({
   variable: "--font-poppins",
-  weight: ["400", "600", "700"],
+  weight: ["400", "600", "700", "900"],
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
   title: "SplitPlay",
   description: "Divida contas de mesa de forma simples e divertida.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Sem viewport-fit: "cover" de propósito: mantém o conteúdo dentro da área
+  // segura (abaixo da status bar / acima do home indicator), evitando que o
+  // header e a navbar fiquem por baixo da UI do sistema.
 };
 
 export default function RootLayout({

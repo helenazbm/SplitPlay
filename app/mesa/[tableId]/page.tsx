@@ -103,19 +103,6 @@ export default function MesaCompartilharPage() {
           gap: "var(--spacing-fluid-4)",
         }}
       >
-        <p
-          className="font-poppins text-center"
-          style={{ fontSize: "var(--text-fluid-base)" }}
-        >
-          {error}
-        </p>
-        <Link
-          href="/"
-          className="font-poppins rounded-[30px] bg-white px-6 py-3 font-semibold text-[#418964]"
-          style={{ fontSize: "var(--text-fluid-sm)" }}
-        >
-          Voltar para home
-        </Link>
       </main>
     );
   }
@@ -222,14 +209,6 @@ export default function MesaCompartilharPage() {
             Ir para mesa
           </Link>
         </div>
-
-        <Link
-          href="/"
-          className="font-poppins mt-auto text-center text-[#64835b] underline underline-offset-4"
-          style={{ fontSize: "var(--text-fluid-sm)" }}
-        >
-          Voltar para home
-        </Link>
       </section>
 
       {showQrModal ? (

@@ -1,14 +1,29 @@
 "use client";
 
-import MesaTabBar, { type MesaTabId } from "@/components/mesa/MesaTabBar";
+import MesaBottomNav, { type MesaTabId } from "@/components/mesa/MesaBottomNav";
+import MesaHeader from "@/components/mesa/MesaHeader";
 import MesaAdminTab from "@/components/mesa/tabs/MesaAdminTab";
+import MesaPagamentoTab from "@/components/mesa/tabs/MesaPagamentoTab";
 import MesaParticipantesTab from "@/components/mesa/tabs/MesaParticipantesTab";
 import MesaPedidosTab from "@/components/mesa/tabs/MesaPedidosTab";
 import { useAuth } from "@/lib/contexts/AuthContext";
-import { getTable } from "@/lib/services/tableService";
+import { userSubtotalCents, userTotalCents } from "@/lib/billing";
+import { subscribeToTableItems } from "@/lib/services/itemService";
+import {
+  closeTable,
+  leaveTable,
+  releaseCurrentTable,
+  subscribeToParticipants,
+  subscribeToTable,
+  transferAdmin,
+  updateMySubtotal,
+  updateTableSettings,
+} from "@/lib/services/tableService";
+import type { Participant } from "@/lib/types/participant";
+import type { TableItemWithId } from "@/lib/types/item";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function MesaPainelPage() {
   const router = useRouter();
@@ -17,12 +32,37 @@ export default function MesaPainelPage() {
   const { user, loading: authLoading } = useAuth();
 
   const [tableName, setTableName] = useState<string | null>(null);
+  const [adminUid, setAdminUid] = useState<string | null>(null);
+  const [couvert, setCouvert] = useState(0);
+  const [tipPercent, setTipPercent] = useState(10);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [items, setItems] = useState<TableItemWithId[]>([]);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<MesaTabId>("pedidos");
+  const [leaving, setLeaving] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [closed, setClosed] = useState(false);
+  const [activeTab, setActiveTab] = useState<MesaTabId>("itens");
   const [showCreateItem, setShowCreateItem] = useState(false);
 
-  const isAdmin = true;
+  const isAdmin = Boolean(user && adminUid && user.uid === adminUid);
+
+  // Último subtotal persistido, para não regravar o mesmo valor a cada render.
+  const lastSubtotalRef = useRef<string | null>(null);
+
+  const participantesView = useMemo(
+    () =>
+      participants.map((participante) => ({
+        uid: participante.uid,
+        displayName: participante.displayName,
+        avatarUrl: participante.avatarUrl,
+        isAdmin: participante.uid === adminUid,
+        paid: participante.paid,
+        subtotalCents: participante.subtotalCents,
+      })),
+    [participants, adminUid],
+  );
 
   useEffect(() => {
     if (authLoading) {
@@ -36,45 +76,155 @@ export default function MesaPainelPage() {
 
     let cancelled = false;
 
-    async function loadTable() {
-      try {
-        const table = await getTable(tableId);
+    const unsubscribeTable = subscribeToTable(
+      tableId,
+      (table) => {
         if (cancelled) {
           return;
         }
 
         if (!table) {
           setError("Mesa não encontrada.");
-          return;
-        }
-
-        if (table.status === "encerrada") {
-          setError("Essa mesa foi encerrada.");
+          setLoading(false);
           return;
         }
 
         setTableName(table.name);
-      } catch {
+        setAdminUid(table.adminUid);
+        setCouvert(table.couvertSuggested ?? 0);
+        setTipPercent(table.tipPercent ?? 10);
+        setLoading(false);
+
+        if (table.status === "encerrada") {
+          setClosed(true);
+        }
+      },
+      () => {
         if (!cancelled) {
           setError("Não foi possível carregar a mesa.");
-        }
-      } finally {
-        if (!cancelled) {
           setLoading(false);
         }
-      }
-    }
+      },
+    );
 
-    void loadTable();
+    const unsubscribeParticipants = subscribeToParticipants(
+      tableId,
+      (list) => {
+        if (!cancelled) {
+          setParticipants(list);
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setError("Não foi possível carregar os participantes.");
+        }
+      },
+    );
+
+    // Itens da mesa: usados para calcular e persistir o subtotal do participante.
+    const unsubscribeItems = subscribeToTableItems(
+      tableId,
+      (list) => {
+        if (!cancelled) {
+          setItems(list);
+          setItemsLoaded(true);
+        }
+      },
+      () => {},
+    );
 
     return () => {
       cancelled = true;
+      unsubscribeTable();
+      unsubscribeParticipants();
+      unsubscribeItems();
     };
   }, [authLoading, user, router, tableId]);
 
+  // Mesa encerrada: libera o usuário (zera o currentTableId) e leva para a home.
+  useEffect(() => {
+    if (closed) {
+      void releaseCurrentTable()
+        .catch(() => {})
+        .finally(() => router.replace("/"));
+    }
+  }, [closed, router]);
+
+  // Persiste o subtotal (centavos) do usuário no doc dele sempre que itens ou
+  // couvert mudam. Cada cliente grava o seu (cálculo interino; ver lib/billing).
+  useEffect(() => {
+    if (!user || !itemsLoaded || closed) {
+      return;
+    }
+    if (!participants.some((participante) => participante.uid === user.uid)) {
+      return;
+    }
+
+    const subtotal = userSubtotalCents(user.uid, items, couvert);
+    // Gorjeta opt-in do próprio usuário (decisão b: total já com a gorjeta).
+    const myTipEnabled =
+      participants.find((p) => p.uid === user.uid)?.tipEnabled ?? false;
+    const total = userTotalCents(subtotal, tipPercent, myTipEnabled);
+
+    const key = `${subtotal}:${total}`;
+    if (lastSubtotalRef.current === key) {
+      return;
+    }
+    lastSubtotalRef.current = key;
+
+    void updateMySubtotal(tableId, subtotal, total).catch(() => {
+      lastSubtotalRef.current = null; // permite nova tentativa
+    });
+  }, [
+    user,
+    items,
+    couvert,
+    tipPercent,
+    participants,
+    itemsLoaded,
+    closed,
+    tableId,
+  ]);
+
+  async function handleLeave() {
+    setLeaving(true);
+    try {
+      await leaveTable(tableId);
+      router.push("/");
+    } catch {
+      setError("Não foi possível sair da mesa.");
+      setLeaving(false);
+    }
+  }
+
+  async function handleSaveSettings(settings: {
+    couvertSuggested: number;
+    tipPercent: number;
+  }) {
+    // A subscription da mesa reflete o novo couvert na aba de itens.
+    await updateTableSettings(tableId, settings);
+  }
+
+  async function handleAssignAdmin(newAdminUid: string) {
+    // A subscription da mesa detecta o novo adminUid e atualiza a UI (o usuário
+    // atual deixa de ser admin). Deixa o erro propagar para o modal tratar.
+    await transferAdmin(tableId, newAdminUid);
+  }
+
+  async function handleCloseTable() {
+    setClosing(true);
+    try {
+      await closeTable(tableId);
+      // A subscription detecta o status "encerrada" e mostra a tela de encerrada.
+    } catch {
+      setError("Não foi possível encerrar a mesa.");
+      setClosing(false);
+    }
+  }
+
   if (authLoading || loading) {
     return (
-      <main className="flex min-h-dvh flex-1 items-center justify-center bg-[#fffbf0] text-[#418964]">
+      <main className="flex min-h-dvh flex-1 items-center justify-center bg-white text-[#418964]">
         <p
           className="font-poppins"
           style={{ fontSize: "var(--text-fluid-sm)" }}
@@ -85,10 +235,34 @@ export default function MesaPainelPage() {
     );
   }
 
+  if (closed) {
+    return (
+      <main
+        className="flex min-h-dvh flex-1 flex-col items-center justify-center bg-white"
+        style={{
+          padding: "var(--spacing-fluid-5)",
+          gap: "var(--spacing-fluid-4)",
+        }}
+      >
+        <i
+          aria-hidden="true"
+          className="pi pi-flag-fill text-[#418964]"
+          style={{ fontSize: "var(--text-fluid-3xl)" }}
+        />
+        <p
+          className="font-poppins text-center text-[#418964]"
+          style={{ fontSize: "var(--text-fluid-base)" }}
+        >
+          A mesa foi encerrada pelo administrador.
+        </p>
+      </main>
+    );
+  }
+
   if (error || !tableName) {
     return (
       <main
-        className="flex min-h-dvh flex-1 flex-col items-center justify-center bg-[#fffbf0]"
+        className="flex min-h-dvh flex-1 flex-col items-center justify-center bg-white"
         style={{
           padding: "var(--spacing-fluid-5)",
           gap: "var(--spacing-fluid-4)",
@@ -100,50 +274,16 @@ export default function MesaPainelPage() {
         >
           {error ?? "Mesa não encontrada."}
         </p>
-        <Link
-          href="/"
-          className="font-poppins rounded-[30px] bg-[#418964] px-6 py-3 font-semibold text-white"
-          style={{ fontSize: "var(--text-fluid-sm)" }}
-        >
-          Voltar para home
-        </Link>
       </main>
     );
   }
 
   return (
-    <main className="flex min-h-dvh flex-1 flex-col bg-[#fffbf0]">
-      <header
-        className="shrink-0 bg-[#418964]"
-        style={{
-          paddingInline: "var(--spacing-fluid-5)",
-          paddingTop: "var(--spacing-fluid-5)",
-          paddingBottom: "var(--spacing-fluid-4)",
-        }}
-      >
-        <div
-          className="flex items-start justify-between"
-          style={{ gap: "var(--spacing-fluid-3)" }}
-        >
-          <div className="min-w-0">
-            <h1
-              className="font-bagel truncate leading-tight text-white"
-              style={{ fontSize: "var(--text-fluid-2xl)" }}
-            >
-              {tableName}
-            </h1>
-            <p
-              className="font-poppins text-white/90"
-              style={{
-                marginTop: "var(--spacing-fluid-1)",
-                fontSize: "var(--text-fluid-xs)",
-              }}
-            >
-              Código {tableId}
-              {isAdmin ? " · Admin" : ""}
-            </p>
-          </div>
-
+    <main className="flex min-h-dvh flex-1 flex-col bg-white">
+      <MesaHeader
+        userName={user?.displayName?.trim() || "Jogador"}
+        code={tableId}
+        right={
           <Link
             href={`/mesa/${tableId}`}
             aria-label="Ver código e QR Code"
@@ -159,70 +299,70 @@ export default function MesaPainelPage() {
               style={{ fontSize: "var(--text-fluid-base)" }}
             />
           </Link>
-        </div>
-      </header>
+        }
+      />
 
       <section
-        className="flex min-h-0 flex-1 flex-col bg-[#fffbf0]"
+        className="flex min-h-0 flex-1 flex-col bg-white"
         style={{
           paddingInline: "var(--spacing-fluid-4)",
           paddingTop: "var(--spacing-fluid-4)",
-          paddingBottom: "var(--spacing-fluid-5)",
+          paddingBottom: "var(--bottom-nav-space)",
           gap: "var(--spacing-fluid-3)",
         }}
       >
-        <div
-          className="flex items-center"
-          style={{ gap: "var(--spacing-fluid-2)" }}
-        >
-          <div className="min-w-0 flex-1">
-            <MesaTabBar
-              activeTab={activeTab}
-              onChange={setActiveTab}
-              showAdmin={isAdmin}
-            />
-          </div>
-
-          {activeTab === "pedidos" ? (
-            <button
-              type="button"
-              aria-label="Adicionar item"
-              onClick={() => setShowCreateItem(true)}
-              className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050]"
-              style={{
-                height: "2rem",
-                paddingInline: "var(--spacing-fluid-3)",
-                fontSize: "var(--text-fluid-xs)",
-                gap: "0.25rem",
-              }}
-            >
-              <i aria-hidden="true" className="pi pi-plus" />
-              Adicionar item
-            </button>
-          ) : null}
-        </div>
-
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {activeTab === "pedidos" ? (
+          {activeTab === "itens" ? (
             <MesaPedidosTab
               isCreateOpen={showCreateItem}
+              onOpenCreate={() => setShowCreateItem(true)}
               onCloseCreate={() => setShowCreateItem(false)}
+              couvert={couvert}
             />
           ) : null}
-          {activeTab === "participantes" ? <MesaParticipantesTab /> : null}
-          {activeTab === "admin" && isAdmin ? (
-            <MesaAdminTab tableName={tableName} />
+          {activeTab === "mesa" ? (
+            <MesaParticipantesTab
+              participantes={participantesView}
+              currentUserIsAdmin={isAdmin}
+              onAssignAdmin={handleAssignAdmin}
+            />
+          ) : null}
+          {activeTab === "historico" ? (
+            <p
+              className="font-poppins text-center text-[#9bb0a4]"
+              style={{
+                paddingTop: "var(--spacing-fluid-6)",
+                fontSize: "var(--text-fluid-sm)",
+              }}
+            >
+              Histórico em breve.
+            </p>
+          ) : null}
+          {activeTab === "pagamento" ? <MesaPagamentoTab /> : null}
+          {activeTab === "ajustes" && isAdmin ? (
+            <MesaAdminTab
+              tableName={tableName}
+              couvert={couvert}
+              tipPercent={tipPercent}
+              participants={participants.map((p) => ({
+                uid: p.uid,
+                displayName: p.displayName,
+                avatarUrl: p.avatarUrl,
+                paid: p.paid,
+              }))}
+              onSaveSettings={handleSaveSettings}
+              onCloseTable={() => void handleCloseTable()}
+              closing={closing}
+            />
           ) : null}
         </div>
-
-        <Link
-          href="/"
-          className="font-poppins shrink-0 text-center text-[#64835b] underline underline-offset-4"
-          style={{ fontSize: "var(--text-fluid-sm)" }}
-        >
-          Voltar para home
-        </Link>
       </section>
+
+      <MesaBottomNav
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        isAdmin={isAdmin}
+      />
     </main>
   );
 }

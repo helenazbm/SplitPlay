@@ -32,15 +32,38 @@ function requireCurrentUser() {
 }
 
 function normalizeItem(snapshotId: string, data: Record<string, unknown>): TableItemWithId {
+  const ownerUid = String(data.ownerUid ?? "");
+
+  // consumerUids é a fonte da verdade; mantém compat com o campo antigo
+  // consumerUid (string única) de itens criados antes do compartilhamento.
+  let consumerUids: string[] = [];
+  if (Array.isArray(data.consumerUids)) {
+    consumerUids = data.consumerUids.map((uid) => String(uid)).filter(Boolean);
+  } else if (data.consumerUid) {
+    consumerUids = [String(data.consumerUid)];
+  }
+  if (consumerUids.length === 0 && ownerUid) {
+    consumerUids = [ownerUid];
+  }
+
   return {
     id: snapshotId,
     name: String(data.name ?? ""),
     price: Number(data.price ?? 0),
-    consumerUid: String(data.consumerUid ?? ""),
-    ownerUid: String(data.ownerUid ?? ""),
+    quantity: Number(data.quantity ?? 1) || 1,
+    icon: data.icon ? String(data.icon) : null,
+    consumerUids,
+    ownerUid,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   };
+}
+
+/** Normaliza/valida o conjunto de quem divide o item: dono sempre incluído, sem repetições. */
+function buildConsumerUids(ownerUid: string, consumerUids: string[]): string[] {
+  const unique = new Set(consumerUids.filter(Boolean));
+  unique.add(ownerUid);
+  return Array.from(unique);
 }
 
 export function subscribeToTableItems(
@@ -72,7 +95,7 @@ export function subscribeToTableItems(
 
 export function subscribeToTableParticipants(
   tableId: string,
-  onChange: (participants: Array<{ uid: string; displayName: string }>) => void,
+  onChange: (participants: Array<{ uid: string; displayName: string; avatarUrl?: string | null }>) => void,
   onError?: (error: Error) => void,
 ) {
   const participantsQuery = query(
@@ -90,6 +113,7 @@ export function subscribeToTableParticipants(
           return {
             uid: String(data.uid ?? participantSnapshot.id),
             displayName: String(data.displayName ?? "Participante"),
+            avatarUrl: (data.avatarUrl as string | null | undefined) ?? null,
           };
         }),
       );
@@ -116,10 +140,14 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
     throw new Error("Informe um valor válido.");
   }
 
+  const consumerUids = buildConsumerUids(current.uid, input.consumerUids);
+
   const itemRef = await addDoc(collection(db, "tables", tableId, "items"), {
     name,
     price: input.price,
-    consumerUid: input.consumerUid,
+    quantity: input.quantity ?? 1,
+    icon: input.icon ?? null,
+    consumerUids,
     ownerUid: current.uid,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -163,7 +191,9 @@ export async function updateTableItem(
   await updateDoc(itemRef, {
     name,
     price: input.price,
-    consumerUid: input.consumerUid,
+    quantity: input.quantity ?? 1,
+    icon: input.icon ?? null,
+    consumerUids: buildConsumerUids(current.uid, input.consumerUids),
     updatedAt: serverTimestamp(),
   });
 }

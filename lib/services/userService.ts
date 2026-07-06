@@ -7,19 +7,11 @@ import {
   setDoc,
   updateDoc,
 } from "firebase/firestore";
-import {
-  deleteObject,
-  getDownloadURL,
-  ref as storageRef,
-  uploadBytes,
-} from "firebase/storage";
 
-import { auth, db, storage } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import type { User } from "@/lib/types/user";
 
 const SIGNUP_BONUS_COINS = 10;
-
-const AVATAR_PATH = (uid: string) => `users/${uid}/avatar/profile`;
 
 function requireCurrentUser(): FirebaseUser {
   const current = auth.currentUser;
@@ -43,6 +35,7 @@ export async function getUserDoc(): Promise<User | null> {
 export async function ensureUserDoc(
   firebaseUser: FirebaseUser,
   fallbackDisplayName?: string,
+  avatarUrl?: string | null,
 ) {
   const ref = doc(db, "users", firebaseUser.uid);
   const snapshot = await getDoc(ref);
@@ -62,6 +55,7 @@ export async function ensureUserDoc(
     type: "registered",
     displayName,
     email: firebaseUser.email ?? null,
+    avatarUrl: avatarUrl ?? firebaseUser.photoURL ?? null,
     coins: SIGNUP_BONUS_COINS,
     ownedItemIds: [],
     currentTableId: null,
@@ -70,6 +64,18 @@ export async function ensureUserDoc(
   } satisfies Omit<User, "createdAt" | "updatedAt"> & {
     createdAt: ReturnType<typeof serverTimestamp>;
     updatedAt: ReturnType<typeof serverTimestamp>;
+  });
+}
+
+/**
+ * Atualiza o doc do usuário após vincular credenciais a uma conta anônima:
+ * marca como registrada e grava o e-mail. Demais campos são preservados.
+ */
+export async function promoteUserToRegistered(firebaseUser: FirebaseUser) {
+  await updateDoc(doc(db, "users", firebaseUser.uid), {
+    type: "registered",
+    email: firebaseUser.email ?? null,
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -87,41 +93,18 @@ export async function updateDisplayName(displayName: string) {
   });
 }
 
-export async function uploadProfilePhoto(file: File) {
+export async function updateAvatar(avatarUrl: string | null) {
   const current = requireCurrentUser();
-  if (!file.type.startsWith("image/")) {
-    throw new Error("Selecione um arquivo de imagem.");
-  }
-  if (file.size > 5 * 1024 * 1024) {
-    throw new Error("Imagem maior que 5MB.");
-  }
+  // Vazio = "sem foto": limpa o photoURL/avatarUrl.
+  const value = avatarUrl && avatarUrl.trim() ? avatarUrl : null;
 
-  const ref = storageRef(storage, AVATAR_PATH(current.uid));
-  await uploadBytes(ref, file, { contentType: file.type });
-  const photoURL = await getDownloadURL(ref);
-
-  await updateProfile(current, { photoURL });
+  await updateProfile(current, { photoURL: value });
   await updateDoc(doc(db, "users", current.uid), {
-    photoURL,
+    avatarUrl: value,
     updatedAt: serverTimestamp(),
   });
-
-  return photoURL;
 }
 
 export async function deleteUserData(uid: string) {
-  try {
-    await deleteObject(storageRef(storage, AVATAR_PATH(uid)));
-  } catch (err) {
-    if (
-      !err ||
-      typeof err !== "object" ||
-      !("code" in err) ||
-      (err as { code: string }).code !== "storage/object-not-found"
-    ) {
-      throw err;
-    }
-  }
-
   await deleteDoc(doc(db, "users", uid));
 }

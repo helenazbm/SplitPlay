@@ -2,6 +2,7 @@
 
 import AuthField from "@/components/AuthField";
 import EnterButton from "@/components/EnterButton";
+import FixedPricesModal from "@/components/mesa/FixedPricesModal";
 import WaveTop from "@/components/WaveTop";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import {
@@ -24,6 +25,7 @@ export default function CriarMesaPage() {
   const [checkingUser, setCheckingUser] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
+  const [showPrices, setShowPrices] = useState(false);
 
   useEffect(() => {
     if (authLoading) {
@@ -65,21 +67,38 @@ export default function CriarMesaPage() {
     };
   }, [authLoading, user, router]);
 
-  async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
+  function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!name.trim()) {
+      return;
+    }
+    // Antes de criar, o admin define (opcionalmente) os preços fixos.
+    setError(null);
+    setShowPrices(true);
+  }
+
+  async function handleCreate(values: {
+    couvertSuggested: number;
+    tipPercent: number;
+  }) {
     setError(null);
     setLoading(true);
 
     try {
-      const tableId = await createTable({ name });
+      const tableId = await createTable({
+        name,
+        couvertSuggested: values.couvertSuggested,
+        tipPercent: values.tipPercent,
+      });
       router.push(`/mesa/${tableId}`);
     } catch (err) {
+      setLoading(false);
+      setShowPrices(false);
       if (err instanceof AlreadyInTableError) {
         setActiveTableId(err.tableId);
       } else {
         setError(getFirestoreErrorMessage(err));
       }
-      setLoading(false);
     }
   }
 
@@ -160,6 +179,22 @@ export default function CriarMesaPage() {
           />
         </form>
       </section>
+
+      {showPrices ? (
+        <FixedPricesModal
+          title="Definir Preços Fixos"
+          confirmLabel={loading ? "Criando..." : "Criar mesa"}
+          tipPercent={10}
+          saving={loading}
+          error={error}
+          onCancel={() => {
+            if (!loading) {
+              setShowPrices(false);
+            }
+          }}
+          onConfirm={(values) => void handleCreate(values)}
+        />
+      ) : null}
 
       {activeTableId ? (
         <div

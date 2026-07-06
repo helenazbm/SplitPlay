@@ -3,7 +3,11 @@ export type TableStatus = "aberta" | "encerrada";
 export type Table = {
   adminUid: string;
   name: string;
-  tipSuggested: boolean;
+  /**
+   * Gorjeta sugerida (em %). 10 é o costume no Brasil, mas é configurável e
+   * sempre opcional para o participante. 0 = sem sugestão de gorjeta.
+   */
+  tipPercent: number;
   couvertSuggested: number;
   status: TableStatus;
   createdAt: Date;
@@ -12,4 +16,8 @@ export type Table = {
 
 export type CreateTableInput = {
   name: string;
+  /** Couvert artístico (por pessoa). Default 0. */
+  couvertSuggested?: number;
+  /** Gorjeta sugerida (%). Default 10. */
+  tipPercent?: number;
 };

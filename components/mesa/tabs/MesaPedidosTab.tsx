@@ -9,22 +9,42 @@ import {
   updateTableItem,
 } from "@/lib/services/itemService";
 import type { TableItemWithId } from "@/lib/types/item";
+import ComandaResumo from "@/components/mesa/ComandaResumo";
+import CreateItemModal from "@/components/mesa/CreateItemModal";
+import {
+  centsToReais,
+  userItemShareCents,
+  userSubtotalCents,
+} from "@/lib/billing";
+import { foodIconSrc } from "@/lib/foodIcons";
+import Avatar from "@/components/Avatar";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type MesaPedidosTabProps = {
   isCreateOpen: boolean;
+  onOpenCreate: () => void;
   onCloseCreate: () => void;
+  /** Couvert artístico (por pessoa) definido pelo admin. Entra como item fixo. */
+  couvert?: number;
 };
 
 type ParticipantOption = {
   uid: string;
   displayName: string;
+  avatarUrl?: string | null;
 };
+
+const brl = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
 
 export default function MesaPedidosTab({
   isCreateOpen,
+  onOpenCreate,
   onCloseCreate,
+  couvert = 0,
 }: MesaPedidosTabProps) {
   const params = useParams<{ tableId: string }>();
   const tableId = params.tableId;
@@ -35,23 +55,17 @@ export default function MesaPedidosTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [draftPrice, setDraftPrice] = useState("");
-  const [draftConsumerUid, setDraftConsumerUid] = useState("");
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-  const [editPrice, setEditPrice] = useState("");
-  const [editConsumerUid, setEditConsumerUid] = useState("");
 
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-
+    // loading inicia em true; as subscriptions ajustam loading/error nos
+    // callbacks (evita setState síncrono no corpo do effect — cascading renders).
     const stopItems = subscribeToTableItems(
       tableId,
       (nextItems) => {
         setItems(nextItems);
         setLoading(false);
+        setError(null);
       },
       (nextError) => {
         setError(nextError.message);
@@ -76,26 +90,53 @@ export default function MesaPedidosTab({
       participants.length > 0
         ? participants
         : user
-          ? [{ uid: user.uid, displayName: user.displayName ?? "Eu" }]
+          ? [
+              {
+                uid: user.uid,
+                displayName: user.displayName ?? "Você",
+                avatarUrl: user.photoURL ?? null,
+              },
+            ]
           : [],
     [participants, user],
   );
 
-  useEffect(() => {
-    if (!draftConsumerUid && participantOptions.length > 0) {
-      setDraftConsumerUid(participantOptions[0].uid);
+  const participantByUid = useMemo(() => {
+    const map = new Map<string, ParticipantOption>();
+    for (const participant of participantOptions) {
+      map.set(participant.uid, participant);
     }
-  }, [draftConsumerUid, participantOptions]);
+    return map;
+  }, [participantOptions]);
 
-  const total = useMemo(
-    () => items.reduce((sum, item) => sum + item.price, 0),
-    [items],
+  // A aba mostra apenas os itens que o usuário logado consome (sozinho ou compartilhado).
+  const myItems = useMemo(
+    () => items.filter((item) => user && item.consumerUids.includes(user.uid)),
+    [items, user],
   );
 
-  async function handleCreateItem(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  // Couvert artístico é cobrado por pessoa: entra na conta de todos.
+  const hasCouvert = couvert > 0;
 
-    if (!draftName.trim() || !draftConsumerUid) {
+  // Item em edição (abre o modal pré-preenchido).
+  const editingItem = items.find((it) => it.id === editingItemId) ?? null;
+
+  // Total (sua parte) calculado em centavos + maior resto: itens que você
+  // divide + couvert artístico. Evita erro de arredondamento do ponto flutuante.
+  const total = useMemo(
+    () =>
+      user ? centsToReais(userSubtotalCents(user.uid, myItems, couvert)) : 0,
+    [myItems, couvert, user],
+  );
+
+  async function handleCreateItem(data: {
+    name: string;
+    price: number;
+    quantity: number;
+    consumerUids: string[];
+    icon: string | null;
+  }) {
+    if (!user) {
       return;
     }
 
@@ -103,16 +144,14 @@ export default function MesaPedidosTab({
     setError(null);
 
     try {
-      await createTableItem(tableId, {
-        name: draftName,
-        price: Number(draftPrice),
-        consumerUid: draftConsumerUid,
-      });
-      setDraftName("");
-      setDraftPrice("");
+      await createTableItem(tableId, data);
       onCloseCreate();
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Não foi possível adicionar o item.");
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível adicionar o item.",
+      );
     } finally {
       setSaving(false);
     }
@@ -122,17 +161,17 @@ export default function MesaPedidosTab({
     if (item.ownerUid !== user?.uid) {
       return;
     }
-
     setEditingItemId(item.id);
-    setEditName(item.name);
-    setEditPrice(String(item.price));
-    setEditConsumerUid(item.consumerUid);
   }
 
-  async function handleSaveEdit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!editingItemId) {
+  async function handleUpdateItem(data: {
+    name: string;
+    price: number;
+    quantity: number;
+    consumerUids: string[];
+    icon: string | null;
+  }) {
+    if (!editingItemId || !user) {
       return;
     }
 
@@ -140,14 +179,14 @@ export default function MesaPedidosTab({
     setError(null);
 
     try {
-      await updateTableItem(tableId, editingItemId, {
-        name: editName,
-        price: Number(editPrice),
-        consumerUid: editConsumerUid,
-      });
+      await updateTableItem(tableId, editingItemId, data);
       setEditingItemId(null);
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Não foi possível editar o item.");
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível editar o item.",
+      );
     } finally {
       setSaving(false);
     }
@@ -163,7 +202,11 @@ export default function MesaPedidosTab({
         setEditingItemId(null);
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Não foi possível excluir o item.");
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível excluir o item.",
+      );
     } finally {
       setSaving(false);
     }
@@ -176,96 +219,34 @@ export default function MesaPedidosTab({
       aria-label="Pedidos"
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
-      <div className="flex items-start justify-between" style={{ gap: "var(--spacing-fluid-2)" }}>
-        <div>
-          <h2 className="font-bagel text-[#418964]" style={{ fontSize: "var(--text-fluid-lg)" }}>
-            Itens da mesa
-          </h2>
-          <p
-            className="font-poppins text-[#64835b]"
-            style={{ marginTop: "var(--spacing-fluid-1)", fontSize: "var(--text-fluid-xs)" }}
-          >
-            Lista em tempo real com consumidor, edição e exclusão restritas ao dono.
-          </p>
-        </div>
-
-        <span
-          className="font-poppins rounded-full bg-[#cde9da] px-3 py-1 font-semibold text-[#418964]"
-          style={{ fontSize: "var(--text-fluid-xs)" }}
-        >
-          Total {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(total)}
-        </span>
-      </div>
+      <ComandaResumo itemCount={myItems.length} totalReais={total} />
 
       <div
-        className="rounded-[20px] border border-[#418964]/20 bg-white p-4"
-        style={{ display: isCreateOpen ? "grid" : "none", gap: "var(--spacing-fluid-3)" }}
+        className="flex items-center justify-between"
+        style={{ gap: "var(--spacing-fluid-2)" }}
       >
-        <h3 className="font-bagel text-[#418964]" style={{ fontSize: "var(--text-fluid-xl)" }}>
-          Adicionar item
-        </h3>
+        <h2
+          className="font-poppins font-black text-[#e5786c]"
+          style={{ fontSize: "20px" }}
+        >
+          Itens Pedidos
+        </h2>
 
-        <form className="grid" onSubmit={handleCreateItem} style={{ gap: "var(--spacing-fluid-2)" }}>
-          <label className="grid gap-1 font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-            Nome do item
-            <input
-              value={draftName}
-              onChange={(event) => setDraftName(event.target.value)}
-              className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964]"
-              placeholder="Ex.: Suco de laranja"
-            />
-          </label>
-
-          <div className="grid grid-cols-2" style={{ gap: "var(--spacing-fluid-2)" }}>
-            <label className="grid gap-1 font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-              Valor
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={draftPrice}
-                onChange={(event) => setDraftPrice(event.target.value)}
-                className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964]"
-                placeholder="0,00"
-              />
-            </label>
-
-            <label className="grid gap-1 font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-              Consumidor
-              <select
-                value={draftConsumerUid}
-                onChange={(event) => setDraftConsumerUid(event.target.value)}
-                className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964]"
-              >
-                {participantOptions.map((participant) => (
-                  <option key={participant.uid} value={participant.uid}>
-                    {participant.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="flex items-center justify-end" style={{ gap: "var(--spacing-fluid-2)" }}>
-            <button
-              type="button"
-              onClick={onCloseCreate}
-              className="font-poppins rounded-[30px] border border-[#418964] px-5 font-semibold text-[#418964]"
-              style={{ height: "var(--height-control-sm)", fontSize: "var(--text-fluid-xs)" }}
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="font-poppins flex items-center rounded-[30px] bg-[#418964] px-5 font-semibold text-white transition hover:bg-[#367050] disabled:cursor-not-allowed disabled:opacity-60"
-              style={{ height: "var(--height-control-sm)", fontSize: "var(--text-fluid-xs)", gap: "0.35rem" }}
-            >
-              <i aria-hidden="true" className="pi pi-plus" />
-              {saving ? "Salvando..." : "Adicionar item"}
-            </button>
-          </div>
-        </form>
+        <button
+          type="button"
+          onClick={onOpenCreate}
+          aria-label="Adicionar item"
+          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95"
+          style={{
+            height: "2rem",
+            paddingInline: "var(--spacing-fluid-3)",
+            fontSize: "var(--text-fluid-xs)",
+            gap: "0.35rem",
+          }}
+        >
+          Item
+          <i aria-hidden="true" className="pi pi-plus" />
+        </button>
       </div>
 
       {error ? (
@@ -277,142 +258,274 @@ export default function MesaPedidosTab({
         </p>
       ) : null}
 
-      <div className="flex items-center justify-between" style={{ gap: "var(--spacing-fluid-2)" }}>
-        <span className="font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-          {loading ? "Carregando itens..." : `${items.length} itens cadastrados`}
-        </span>
-      </div>
+      {loading ? (
+        <p
+          className="font-poppins text-[#64835b]"
+          style={{ fontSize: "var(--text-fluid-xs)" }}
+        >
+          Carregando itens...
+        </p>
+      ) : null}
 
       <div className="flex flex-col" style={{ gap: "var(--spacing-fluid-2)" }}>
-        {items.map((item) => {
+        {myItems.map((item) => {
           const isOwner = item.ownerUid === user?.uid;
-          const isEditing = editingItemId === item.id;
-          const consumerLabel =
-            participantOptions.find((participant) => participant.uid === item.consumerUid)?.displayName ??
-            item.consumerUid;
+          const isShared = item.consumerUids.length > 1;
 
           return (
             <article
               key={item.id}
-              className="rounded-[10px_10px_25px_10px] border border-[#418964]/20 bg-white p-4 shadow-sm"
+              className="w-full border"
+              style={{
+                minHeight: "120px",
+                borderColor: "#5F9C7D",
+                borderWidth: "0.1px",
+                borderRadius: "8px",
+                backgroundColor: "#FBFAF7",
+                padding: "var(--spacing-fluid-3)",
+              }}
             >
-              <div className="flex items-start justify-between" style={{ gap: "var(--spacing-fluid-2)" }}>
-                <div className="min-w-0">
-                  <h3 className="font-poppins truncate font-semibold text-[#418964]" style={{ fontSize: "var(--text-fluid-sm)" }}>
+              <div
+                className="flex items-center"
+                style={{ gap: "var(--spacing-fluid-3)" }}
+              >
+                <span
+                  aria-hidden="true"
+                  className="flex shrink-0 items-center justify-center rounded-full bg-[#fdf3df]"
+                  style={{ height: "2.75rem", width: "2.75rem" }}
+                >
+                  {foodIconSrc(item.icon) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={foodIconSrc(item.icon) as string}
+                      alt=""
+                      className="object-contain"
+                      style={{ height: "1.75rem", width: "1.75rem" }}
+                    />
+                  ) : (
+                    <i
+                      className="pi pi-shopping-bag text-[#e5786c]"
+                      style={{ fontSize: "var(--text-fluid-base)" }}
+                    />
+                  )}
+                </span>
+
+                <div className="min-w-0 flex-1">
+                  <h3
+                    className="font-poppins truncate font-semibold text-[#418964]"
+                    style={{ fontSize: "var(--text-fluid-sm)" }}
+                  >
                     {item.name}
                   </h3>
                   <p
-                    className="font-poppins text-[#64835b]"
-                    style={{ marginTop: "var(--spacing-fluid-1)", fontSize: "var(--text-fluid-xs)" }}
+                    className="font-poppins text-[#9bb0a4]"
+                    style={{
+                      marginTop: "var(--spacing-fluid-1)",
+                      fontSize: "var(--text-fluid-xs)",
+                    }}
                   >
-                    Consumidor: {consumerLabel}
+                    ({item.quantity} {item.quantity === 1 ? "Item" : "Itens"}:{" "}
+                    {brl.format(item.price)})
                   </p>
                 </div>
 
-                <strong className="font-poppins shrink-0 text-[#418964]" style={{ fontSize: "var(--text-fluid-sm)" }}>
-                  {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(item.price)}
+                <strong
+                  className="font-poppins shrink-0 font-bold text-[#e5786c]"
+                  style={{ fontSize: "var(--text-fluid-base)" }}
+                >
+                  {brl.format(
+                    centsToReais(userItemShareCents(user?.uid ?? "", item)),
+                  )}
                 </strong>
               </div>
 
-              <div className="flex items-center justify-between" style={{ marginTop: "var(--spacing-fluid-2)", gap: "var(--spacing-fluid-2)" }}>
-                <span className="font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-                  {isOwner ? "Seu item" : "Somente leitura"}
-                </span>
-
-                <div className="flex items-center" style={{ gap: "var(--spacing-fluid-2)" }}>
-                  <button
-                    type="button"
-                    disabled={!isOwner || saving}
-                    onClick={() => beginEdit(item)}
-                    className="font-poppins rounded-[30px] border border-[#418964] px-4 font-semibold text-[#418964] transition hover:bg-[#cde9da] disabled:cursor-not-allowed disabled:opacity-50"
-                    style={{ height: "2.25rem", fontSize: "var(--text-fluid-xs)" }}
-                  >
-                    Editar item
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!isOwner || saving}
-                    onClick={() => void handleDelete(item.id)}
-                    className="font-poppins rounded-[30px] bg-[#f8d7da] px-4 font-semibold text-[#8a3b43] transition hover:bg-[#f4c6cd] disabled:cursor-not-allowed disabled:opacity-50"
-                    style={{ height: "2.25rem", fontSize: "var(--text-fluid-xs)" }}
-                  >
-                    Excluir item
-                  </button>
-                </div>
-              </div>
-
-              {isEditing ? (
-                <form className="mt-3 grid" onSubmit={handleSaveEdit} style={{ gap: "var(--spacing-fluid-2)" }}>
-                  <label className="grid gap-1 font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-                    Nome do item
-                    <input
-                      value={editName}
-                      onChange={(event) => setEditName(event.target.value)}
-                      className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964]"
-                    />
-                  </label>
-
-                  <div className="grid grid-cols-2" style={{ gap: "var(--spacing-fluid-2)" }}>
-                    <label className="grid gap-1 font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-                      Valor
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={editPrice}
-                        onChange={(event) => setEditPrice(event.target.value)}
-                        className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964]"
-                      />
-                    </label>
-
-                    <label className="grid gap-1 font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-xs)" }}>
-                      Consumidor
-                      <select
-                        value={editConsumerUid}
-                        onChange={(event) => setEditConsumerUid(event.target.value)}
-                        className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964]"
+              {isShared || isOwner ? (
+                <div
+                  className="flex items-center justify-between"
+                  style={{
+                    marginTop: "var(--spacing-fluid-3)",
+                    paddingTop: "var(--spacing-fluid-2)",
+                    gap: "var(--spacing-fluid-2)",
+                    // linha ocupando toda a largura do card (anula o padding lateral)
+                    marginInline: "calc(-1 * var(--spacing-fluid-3))",
+                    paddingInline: "var(--spacing-fluid-3)",
+                    borderTop: "0.1px solid #5F9C7D",
+                  }}
+                >
+                  {isShared ? (
+                    <div
+                      className="flex min-w-0 items-center"
+                      style={{ gap: "var(--spacing-fluid-2)" }}
+                    >
+                      <div className="flex -space-x-2">
+                        {item.consumerUids.slice(0, 3).map((uid) => {
+                          const p = participantByUid.get(uid);
+                          return (
+                            <Avatar
+                              key={uid}
+                              name={
+                                uid === user?.uid
+                                  ? (p?.displayName ?? "Você")
+                                  : (p?.displayName ?? "?")
+                              }
+                              avatarUrl={p?.avatarUrl}
+                              className="border-2 border-white"
+                              style={{ height: "1.5rem", width: "1.5rem" }}
+                              textStyle={{ fontSize: "0.55rem" }}
+                            />
+                          );
+                        })}
+                      </div>
+                      <span
+                        className="font-poppins truncate text-[#64835b]"
+                        style={{ fontSize: "var(--text-fluid-xs)" }}
                       >
-                        {participantOptions.map((participant) => (
-                          <option key={participant.uid} value={participant.uid}>
-                            {participant.displayName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
+                        {item.consumerUids.length} participantes
+                      </span>
+                    </div>
+                  ) : (
+                    <span
+                      className="font-poppins text-[#9bb0a4]"
+                      style={{ fontSize: "var(--text-fluid-xs)" }}
+                    >
+                      
+                    </span>
+                  )}
 
-                  <div className="flex items-center justify-end" style={{ gap: "var(--spacing-fluid-2)" }}>
-                    <button
-                      type="button"
-                      onClick={() => setEditingItemId(null)}
-                      className="font-poppins rounded-[30px] border border-[#418964] px-4 font-semibold text-[#418964]"
-                      style={{ height: "2.25rem", fontSize: "var(--text-fluid-xs)" }}
+                  {isOwner ? (
+                    <div
+                      className="flex shrink-0 items-stretch overflow-hidden rounded-full border border-[#5F9C7D]"
+                      style={{ width: "60px", height: "20px" }}
                     >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      className="font-poppins rounded-[30px] bg-[#418964] px-4 font-semibold text-white transition hover:bg-[#367050] disabled:cursor-not-allowed disabled:opacity-60"
-                      style={{ height: "2.25rem", fontSize: "var(--text-fluid-xs)" }}
-                    >
-                      {saving ? "Salvando..." : "Salvar alteração"}
-                    </button>
-                  </div>
-                </form>
+                      <button
+                        type="button"
+                        aria-label="Excluir item"
+                        disabled={saving}
+                        onClick={() => void handleDelete(item.id)}
+                        className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                      >
+                        <i
+                          aria-hidden="true"
+                          className="pi pi-trash"
+                          style={{ fontSize: "0.7rem" }}
+                        />
+                      </button>
+                      <span
+                        aria-hidden="true"
+                        className="w-px self-stretch bg-[#5F9C7D]/70"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Editar item"
+                        disabled={saving}
+                        onClick={() => beginEdit(item)}
+                        className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                      >
+                        <i
+                          aria-hidden="true"
+                          className="pi pi-pencil"
+                          style={{ fontSize: "0.7rem" }}
+                        />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
+
             </article>
           );
         })}
 
-        {!loading && items.length === 0 ? (
+        {hasCouvert ? (
+          <article
+            className="w-full border"
+            style={{
+              minHeight: "88px",
+              borderColor: "#B0B0B0",
+              borderWidth: "0.5px",
+              borderRadius: "8px",
+              backgroundColor: "#F8F8F8",
+              padding: "var(--spacing-fluid-3)",
+            }}
+          >
+            <div
+              className="flex items-start justify-between"
+              style={{ gap: "var(--spacing-fluid-2)" }}
+            >
+              <div className="min-w-0">
+                <h3
+                  className="font-poppins truncate font-semibold text-[#747474]"
+                  style={{ fontSize: "var(--text-fluid-sm)" }}
+                >
+                  Couvert artístico
+                </h3>
+                <p
+                  className="font-poppins text-[#8F8F8F]"
+                  style={{
+                    marginTop: "var(--spacing-fluid-1)",
+                    fontSize: "var(--text-fluid-xs)",
+                  }}
+                >
+                  Fixo do estabelecimento · por pessoa
+                </p>
+              </div>
+
+              <strong
+                className="font-poppins shrink-0 text-[#e5786c]"
+                style={{ fontSize: "var(--text-fluid-sm)" }}
+              >
+                {brl.format(couvert)}
+              </strong>
+            </div>
+          </article>
+        ) : null}
+
+        {!loading && myItems.length === 0 && !hasCouvert ? (
           <div className="rounded-[10px_10px_25px_10px] border border-dashed border-[#418964]/25 bg-white p-6 text-center">
-            <p className="font-poppins text-[#64835b]" style={{ fontSize: "var(--text-fluid-sm)" }}>
-              Nenhum item lançado ainda.
+            <p
+              className="font-poppins text-[#64835b]"
+              style={{ fontSize: "var(--text-fluid-sm)" }}
+            >
+              Você ainda não tem itens. Toque em “Adicionar item”.
             </p>
           </div>
         ) : null}
       </div>
+
+      {isCreateOpen ? (
+        <CreateItemModal
+          participants={participantOptions}
+          currentUid={user?.uid ?? ""}
+          saving={saving}
+          error={error}
+          onClose={onCloseCreate}
+          onSubmit={handleCreateItem}
+        />
+      ) : null}
+
+      {editingItem ? (
+        <CreateItemModal
+          participants={participantOptions}
+          currentUid={user?.uid ?? ""}
+          saving={saving}
+          error={error}
+          onClose={() => setEditingItemId(null)}
+          onSubmit={handleUpdateItem}
+          title="Editar Item"
+          submitLabel="Salvar"
+          initialName={editingItem.name}
+          initialPrice={
+            editingItem.quantity > 0
+              ? editingItem.price / editingItem.quantity
+              : editingItem.price
+          }
+          initialQuantity={editingItem.quantity}
+          initialIcon={editingItem.icon}
+          initialSharedUids={editingItem.consumerUids.filter(
+            (uid) => uid !== user?.uid,
+          )}
+        />
+      ) : null}
     </div>
   );
 }

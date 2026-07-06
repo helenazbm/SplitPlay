@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
+import { onIdTokenChanged, type User as FirebaseUser } from "firebase/auth";
 
 import { auth } from "@/lib/firebase";
 
@@ -24,7 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onIdTokenChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setLoading(false);
     });

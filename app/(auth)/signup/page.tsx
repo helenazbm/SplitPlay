@@ -12,11 +12,19 @@ import {
   signUpWithEmail,
 } from "@/lib/services/authService";
 
+const AVATAR_OPTIONS = [
+  "/avatars/avatar-1.png",
+  "/avatars/avatar-2.png",
+  "/avatars/avatar-3.png",
+  "/avatars/avatar-4.png",
+];
+
 export default function SignUpPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [avatar, setAvatar] = useState<string | null>(AVATAR_OPTIONS[0]);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +38,9 @@ export default function SignUpPage() {
         email: email.trim(),
         password,
         displayName: username.trim(),
+        avatarUrl: avatar,
       });
-      router.push("/perfil");
+      router.push("/");
     } catch (err) {
       setError(getAuthErrorMessage(err));
       setLoading(false);
@@ -73,6 +82,86 @@ export default function SignUpPage() {
             gap: "var(--spacing-fluid-3)",
           }}
         >
+          <div className="flex flex-col">
+            <span
+              className="font-poppins text-[#64835b]"
+              style={{ fontSize: "var(--text-fluid-sm)" }}
+            >
+              Foto de perfil
+            </span>
+            <div
+              className="flex"
+              style={{
+                gap: "var(--spacing-fluid-3)",
+                marginTop: "var(--spacing-fluid-2)",
+              }}
+            >
+              {AVATAR_OPTIONS.map((src, index) => {
+                const selected = src === avatar;
+                return (
+                  <button
+                    key={src}
+                    type="button"
+                    onClick={() => setAvatar(src)}
+                    aria-pressed={selected}
+                    aria-label={`Avatar ${index + 1}`}
+                    className={`relative flex aspect-square flex-1 items-center justify-center rounded-full border-2 transition active:scale-[0.97] ${
+                      selected
+                        ? "border-[#418964] ring-2 ring-[#418964]/25"
+                        : "border-[#418964]/20"
+                    }`}
+                  >
+                    <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-full">
+                      <Image
+                        src={src}
+                        alt=""
+                        width={72}
+                        height={72}
+                        className="h-full w-full object-cover"
+                      />
+                    </span>
+                    {selected ? (
+                      <span className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-[#418964] text-white">
+                        <i
+                          aria-hidden="true"
+                          className="pi pi-check"
+                          style={{ fontSize: "0.6rem" }}
+                        />
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => setAvatar(null)}
+                aria-pressed={avatar === null}
+                aria-label="Sem foto de perfil"
+                className={`relative flex aspect-square flex-1 items-center justify-center rounded-full border-2 bg-[#f3f6f1] text-[#64835b] transition active:scale-[0.97] ${
+                  avatar === null
+                    ? "border-[#418964] ring-2 ring-[#418964]/25"
+                    : "border-[#418964]/20"
+                }`}
+              >
+                <i
+                  aria-hidden="true"
+                  className="pi pi-ban"
+                  style={{ fontSize: "var(--text-fluid-lg)" }}
+                />
+                {avatar === null ? (
+                  <span className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-[#418964] text-white">
+                    <i
+                      aria-hidden="true"
+                      className="pi pi-check"
+                      style={{ fontSize: "0.6rem" }}
+                    />
+                  </span>
+                ) : null}
+              </button>
+            </div>
+          </div>
+
           <AuthField
             label="Email"
             name="email"
@@ -86,14 +175,14 @@ export default function SignUpPage() {
           />
 
           <AuthField
-            label="Nome de Usuário"
+            label="Seu nome"
             name="username"
             type="text"
             autoComplete="username"
             required
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="usuário"
+            placeholder="Maria Silva"
             icon={<i aria-hidden="true" className="pi pi-user" />}
           />
 

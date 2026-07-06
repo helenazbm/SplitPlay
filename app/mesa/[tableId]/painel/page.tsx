@@ -7,8 +7,6 @@ import MesaPagamentoTab from "@/components/mesa/tabs/MesaPagamentoTab";
 import MesaParticipantesTab from "@/components/mesa/tabs/MesaParticipantesTab";
 import MesaPedidosTab from "@/components/mesa/tabs/MesaPedidosTab";
 import { useAuth } from "@/lib/contexts/AuthContext";
-import { userSubtotalCents, userTotalCents } from "@/lib/billing";
-import { subscribeToTableItems } from "@/lib/services/itemService";
 import {
   closeTable,
   leaveTable,
@@ -16,14 +14,12 @@ import {
   subscribeToParticipants,
   subscribeToTable,
   transferAdmin,
-  updateMySubtotal,
   updateTableSettings,
 } from "@/lib/services/tableService";
 import type { Participant } from "@/lib/types/participant";
-import type { TableItemWithId } from "@/lib/types/item";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function MesaPainelPage() {
   const router = useRouter();
@@ -36,8 +32,6 @@ export default function MesaPainelPage() {
   const [couvert, setCouvert] = useState(0);
   const [tipPercent, setTipPercent] = useState(10);
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [items, setItems] = useState<TableItemWithId[]>([]);
-  const [itemsLoaded, setItemsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
@@ -48,15 +42,12 @@ export default function MesaPainelPage() {
 
   const isAdmin = Boolean(user && adminUid && user.uid === adminUid);
 
-  // Último subtotal persistido, para não regravar o mesmo valor a cada render.
-  const lastSubtotalRef = useRef<string | null>(null);
-
   const participantesView = useMemo(
     () =>
       participants.map((participante) => ({
         uid: participante.uid,
         displayName: participante.displayName,
-        avatarUrl: participante.avatarUrl,
+        avatarUrl: participante.avatarUrl ?? null,
         isAdmin: participante.uid === adminUid,
         paid: participante.paid,
         subtotalCents: participante.subtotalCents,
@@ -121,23 +112,10 @@ export default function MesaPainelPage() {
       },
     );
 
-    // Itens da mesa: usados para calcular e persistir o subtotal do participante.
-    const unsubscribeItems = subscribeToTableItems(
-      tableId,
-      (list) => {
-        if (!cancelled) {
-          setItems(list);
-          setItemsLoaded(true);
-        }
-      },
-      () => {},
-    );
-
     return () => {
       cancelled = true;
       unsubscribeTable();
       unsubscribeParticipants();
-      unsubscribeItems();
     };
   }, [authLoading, user, router, tableId]);
 
@@ -150,41 +128,6 @@ export default function MesaPainelPage() {
     }
   }, [closed, router]);
 
-  // Persiste o subtotal (centavos) do usuário no doc dele sempre que itens ou
-  // couvert mudam. Cada cliente grava o seu (cálculo interino; ver lib/billing).
-  useEffect(() => {
-    if (!user || !itemsLoaded || closed) {
-      return;
-    }
-    if (!participants.some((participante) => participante.uid === user.uid)) {
-      return;
-    }
-
-    const subtotal = userSubtotalCents(user.uid, items, couvert);
-    // Gorjeta opt-in do próprio usuário (decisão b: total já com a gorjeta).
-    const myTipEnabled =
-      participants.find((p) => p.uid === user.uid)?.tipEnabled ?? false;
-    const total = userTotalCents(subtotal, tipPercent, myTipEnabled);
-
-    const key = `${subtotal}:${total}`;
-    if (lastSubtotalRef.current === key) {
-      return;
-    }
-    lastSubtotalRef.current = key;
-
-    void updateMySubtotal(tableId, subtotal, total).catch(() => {
-      lastSubtotalRef.current = null; // permite nova tentativa
-    });
-  }, [
-    user,
-    items,
-    couvert,
-    tipPercent,
-    participants,
-    itemsLoaded,
-    closed,
-    tableId,
-  ]);
 
   async function handleLeave() {
     setLeaving(true);

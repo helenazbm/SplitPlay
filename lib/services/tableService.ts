@@ -261,17 +261,32 @@ export async function joinTableAnonymously(
   const anonUser = credential.user;
 
   await updateProfile(anonUser, { displayName: trimmedName });
-  await setDoc(doc(db, "users", anonUser.uid), {
-    uid: anonUser.uid,
-    type: "anonymous",
-    displayName: trimmedName,
-    email: null,
-    coins: 0,
-    ownedItemIds: [],
-    currentTableId: null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
+
+  // O Firebase reaproveita a sessão anônima salva no navegador, então o doc pode
+  // já existir de uma entrada anterior. Um setDoc cego reescreveria createdAt e
+  // seria negado pelas rules (createdAt/coins são imutáveis). Por isso: cria só se
+  // não existir; se já existe, apenas atualiza o nome de exibição escolhido agora.
+  const userRef = doc(db, "users", anonUser.uid);
+  const existing = await getDoc(userRef);
+
+  if (existing.exists()) {
+    await updateDoc(userRef, {
+      displayName: trimmedName,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    await setDoc(userRef, {
+      uid: anonUser.uid,
+      type: "anonymous",
+      displayName: trimmedName,
+      email: null,
+      coins: 0,
+      ownedItemIds: [],
+      currentTableId: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }
 
   await joinTable(tableId);
 }
@@ -302,26 +317,6 @@ export async function closeTable(tableId: string): Promise<void> {
 
   // O admin também sai da mesa.
   await releaseCurrentTable();
-}
-
-/**
- * Persiste o subtotal (em centavos) do participante atual no doc dele. Cálculo
- * interino feito pelo próprio cliente (lib/billing); futuramente será
- * substituído por cálculo autoritativo no servidor.
- */
-export async function updateMySubtotal(
-  tableId: string,
-  subtotalCents: number,
-  totalCents: number,
-): Promise<void> {
-  const current = requireCurrentUser();
-  const clamp = (n: number) =>
-    Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
-
-  await updateDoc(doc(db, "tables", tableId, "participants", current.uid), {
-    subtotalCents: clamp(subtotalCents),
-    totalCents: clamp(totalCents),
-  });
 }
 
 /**

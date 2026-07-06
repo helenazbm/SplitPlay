@@ -1,11 +1,5 @@
 /**
  * Cálculo autoritativo da conta no servidor.
- *
- * Sempre que um item muda (ou o couvert da mesa muda), recalcula o subtotal de
- * TODOS os participantes da mesa em uma transação e grava em cada doc. Como roda
- * no servidor (com o Admin SDK, que ignora as security rules), o número é
- * confiável, fica correto mesmo para quem está offline e é imune a condições de
- * corrida entre escritas concorrentes.
  */
 
 import { initializeApp } from "firebase-admin/app";
@@ -13,7 +7,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { logger } from "firebase-functions/v2";
 
-import { userSubtotalCents, type BillItem } from "./billing";
+import { userSubtotalCents, userTotalCents, type BillItem } from "./billing";
 
 initializeApp();
 const db = getFirestore();
@@ -41,10 +35,15 @@ function toBillItems(
 }
 
 /**
- * Recalcula e persiste o subtotal (centavos) de cada participante da mesa.
- * Tudo numa transação: lê mesa + itens + participantes e grava as diferenças.
+ * Recalcula e persiste `subtotalCents` e `totalCents` de cada participante da
+ * mesa. Tudo numa transação: lê mesa + itens + participantes e grava apenas as
+ * diferenças (idempotente — se nada mudou, não escreve, o que evita laços com o
+ * gatilho de participantes).
+ *
+ * - subtotalCents = couvert (por pessoa) + soma das partes nos itens.
+ * - totalCents    = subtotal + gorjeta, quando o participante optou por incluí-la.
  */
-async function recomputeSubtotals(tableId: string): Promise<void> {
+async function recomputeBill(tableId: string): Promise<void> {
   const tableRef = db.doc(`tables/${tableId}`);
   const itemsRef = db.collection(`tables/${tableId}/items`);
   const participantsRef = db.collection(`tables/${tableId}/participants`);
@@ -62,19 +61,30 @@ async function recomputeSubtotals(tableId: string): Promise<void> {
     }
 
     const couvert = Number(tableSnap.get("couvertSuggested") ?? 0);
+    const tipPercent = Number(tableSnap.get("tipPercent") ?? 0);
     const items = toBillItems(itemsSnap.docs);
 
     let updated = 0;
     participantsSnap.docs.forEach((participant) => {
       const subtotal = userSubtotalCents(participant.id, items, couvert);
-      const current = Number(participant.get("subtotalCents") ?? 0);
-      if (current !== subtotal) {
-        tx.update(participant.ref, { subtotalCents: subtotal });
+      const tipEnabled = participant.get("tipEnabled") === true;
+      const total = userTotalCents(subtotal, tipPercent, tipEnabled);
+
+      const changes: { subtotalCents?: number; totalCents?: number } = {};
+      if (Number(participant.get("subtotalCents") ?? 0) !== subtotal) {
+        changes.subtotalCents = subtotal;
+      }
+      if (Number(participant.get("totalCents") ?? 0) !== total) {
+        changes.totalCents = total;
+      }
+
+      if (Object.keys(changes).length > 0) {
+        tx.update(participant.ref, changes);
         updated += 1;
       }
     });
 
-    logger.info("Subtotais recalculados", { tableId, updated });
+    logger.info("Conta recalculada", { tableId, updated });
   });
 }
 
@@ -82,22 +92,56 @@ async function recomputeSubtotals(tableId: string): Promise<void> {
 export const onItemWrite = onDocumentWritten(
   "tables/{tableId}/items/{itemId}",
   async (event) => {
-    await recomputeSubtotals(event.params.tableId);
+    await recomputeBill(event.params.tableId);
   },
 );
 
-/** Couvert da mesa mudou → recalcula (o couvert entra na conta de cada um). */
+/**
+ * Config da mesa mudou → recalcula quando o que compõe a conta muda: couvert
+ * (entra no subtotal de cada um) ou a gorjeta % (entra no total). Ignora
+ * mudanças de nome/status/admin/etc.
+ */
 export const onTableWrite = onDocumentWritten(
   "tables/{tableId}",
   async (event) => {
-    const before = event.data?.before.get("couvertSuggested");
-    const after = event.data?.after.get("couvertSuggested");
+    const before = event.data?.before;
+    const after = event.data?.after;
 
-    // Só recalcula quando o couvert muda; ignora mudanças de nome/status/etc.
-    if (before === after) {
+    const couvertChanged =
+      before?.get("couvertSuggested") !== after?.get("couvertSuggested");
+    const tipChanged = before?.get("tipPercent") !== after?.get("tipPercent");
+
+    if (!couvertChanged && !tipChanged) {
       return;
     }
 
-    await recomputeSubtotals(event.params.tableId);
+    await recomputeBill(event.params.tableId);
+  },
+);
+
+/**
+ * Participante entrou (create) ou ligou/desligou a gorjeta (tipEnabled) →
+ * recalcula. Não reage às próprias escritas de subtotalCents/totalCents (que não
+ * mexem em tipEnabled nem criam docs), o que evita laço infinito com o gatilho.
+ */
+export const onParticipantWrite = onDocumentWritten(
+  "tables/{tableId}/participants/{participantId}",
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+
+    // Saída de participante não altera a parte dos demais: nada a recalcular.
+    if (!after?.exists) {
+      return;
+    }
+
+    const isCreate = !before?.exists;
+    const tipChanged = before?.get("tipEnabled") !== after.get("tipEnabled");
+
+    if (!isCreate && !tipChanged) {
+      return;
+    }
+
+    await recomputeBill(event.params.tableId);
   },
 );

@@ -14,7 +14,13 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import {
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type SyntheticEvent,
+} from "react";
 
 function getJoinErrorMessage(error: unknown): string {
   if (error instanceof AlreadyInTableError) {
@@ -33,7 +39,7 @@ function getJoinErrorMessage(error: unknown): string {
   return getFirestoreErrorMessage(error);
 }
 
-export default function IdentificacaoMesaPage() {
+function IdentificacaoMesaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tableId = (searchParams.get("code") ?? "").trim();
@@ -173,5 +179,13 @@ export default function IdentificacaoMesaPage() {
         </p>
       </section>
     </main>
+  );
+}
+
+export default function IdentificacaoMesaPage() {
+  return (
+    <Suspense fallback={<main className="min-h-dvh bg-[#fdbfc0]" />}>
+      <IdentificacaoMesaContent />
+    </Suspense>
   );
 }

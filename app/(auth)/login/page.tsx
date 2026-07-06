@@ -6,7 +6,7 @@ import WaveTop from "@/components/WaveTop";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, type SyntheticEvent } from "react";
+import { Suspense, useEffect, useState, type SyntheticEvent } from "react";
 
 import { useAuth } from "@/lib/contexts/AuthContext";
 import {
@@ -14,7 +14,7 @@ import {
   signInWithEmail,
 } from "@/lib/services/authService";
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirect") ?? "/mesa/entrar";
@@ -148,5 +148,13 @@ export default function LoginPage() {
         </p>
       </section>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="min-h-dvh bg-[#fdbfc0]" />}>
+      <LoginContent />
+    </Suspense>
   );
 }

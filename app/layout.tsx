@@ -45,9 +45,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  // Sem viewport-fit: "cover" de propósito: mantém o conteúdo dentro da área
-  // segura (abaixo da status bar / acima do home indicator), evitando que o
-  // header e a navbar fiquem por baixo da UI do sistema.
+  colorScheme: "only light",
+  themeColor: "#418964",
 };
 
 export default function RootLayout({

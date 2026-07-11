@@ -3,8 +3,7 @@
  * de ponto flutuante, com divisão por MAIOR RESTO para que a soma das partes
  * bata exatamente com o total.
  *
- * Este módulo é puro (sem Firebase/React) para ser testável e, futuramente,
- * reaproveitado no servidor (Cloud Functions) como fonte autoritativa.
+ *
  */
 
 export type BillItem = {

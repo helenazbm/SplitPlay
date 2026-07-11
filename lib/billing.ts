@@ -111,3 +111,17 @@ export function userTotalCents(
 ): number {
   return subtotalCents + (tipEnabled ? tipCents(subtotalCents, tipPercent) : 0);
 }
+
+/**
+ * Saldo pendente da mesa (centavos): soma dos totais de quem ainda não pagou.
+ * Fonte de verdade derivada — não precisa de campo persistido na mesa.
+ */
+export function pendingBalanceCents(
+  participants: Array<{ paid: boolean; totalCents: number }>,
+): number {
+  return participants.reduce(
+    (sum, participant) =>
+      sum + (participant.paid ? 0 : Math.max(0, participant.totalCents)),
+    0,
+  );
+}

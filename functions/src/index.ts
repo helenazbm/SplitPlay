@@ -3,7 +3,7 @@
  */
 
 import { initializeApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { logger } from "firebase-functions/v2";
 
@@ -120,9 +120,54 @@ export const onTableWrite = onDocumentWritten(
 );
 
 /**
+ * Encerra a mesa quando todos os participantes estão com `paid === true`.
+ * Idempotente: se a mesa já estiver encerrada ou ainda houver pendentes, não escreve.
+ */
+async function maybeAutoCloseTable(tableId: string): Promise<void> {
+  const tableRef = db.doc(`tables/${tableId}`);
+  const participantsRef = db.collection(`tables/${tableId}/participants`);
+
+  await db.runTransaction(async (tx) => {
+    const [tableSnap, participantsSnap] = await Promise.all([
+      tx.get(tableRef),
+      tx.get(participantsRef),
+    ]);
+
+    if (!tableSnap.exists) {
+      return;
+    }
+
+    if (tableSnap.get("status") === "encerrada") {
+      return;
+    }
+
+    if (participantsSnap.empty) {
+      return;
+    }
+
+    const allPaid = participantsSnap.docs.every(
+      (participant) => participant.get("paid") === true,
+    );
+
+    if (!allPaid) {
+      return;
+    }
+
+    tx.update(tableRef, {
+      status: "encerrada",
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    logger.info("Mesa encerrada automaticamente — todos pagaram", { tableId });
+  });
+}
+
+/**
  * Participante entrou (create) ou ligou/desligou a gorjeta (tipEnabled) →
  * recalcula. Não reage às próprias escritas de subtotalCents/totalCents (que não
  * mexem em tipEnabled nem criam docs), o que evita laço infinito com o gatilho.
+ *
+ * Quando `paid` vira true, tenta encerrar a mesa se todos já pagaram.
  */
 export const onParticipantWrite = onDocumentWritten(
   "tables/{tableId}/participants/{participantId}",
@@ -130,18 +175,25 @@ export const onParticipantWrite = onDocumentWritten(
     const before = event.data?.before;
     const after = event.data?.after;
 
-    // Saída de participante não altera a parte dos demais: nada a recalcular.
+    // Saída de participante: se os restantes já pagaram, pode encerrar.
     if (!after?.exists) {
+      if (before?.exists && before.get("paid") !== true) {
+        await maybeAutoCloseTable(event.params.tableId);
+      }
       return;
     }
 
     const isCreate = !before?.exists;
     const tipChanged = before?.get("tipEnabled") !== after.get("tipEnabled");
+    const justPaid =
+      after.get("paid") === true && before?.get("paid") !== true;
 
-    if (!isCreate && !tipChanged) {
-      return;
+    if (isCreate || tipChanged) {
+      await recomputeBill(event.params.tableId);
     }
 
-    await recomputeBill(event.params.tableId);
+    if (justPaid) {
+      await maybeAutoCloseTable(event.params.tableId);
+    }
   },
 );

@@ -15,6 +15,11 @@ export type TableItem = {
   ownerUid: string;
   createdAt: unknown;
   updatedAt: unknown;
+  /**
+   * Proposta de edição/exclusão ainda não confirmada por todos os outros
+   * consumidores do item. null = sem proposta ativa.
+   */
+  pendingChange: ItemPendingChange | null;
 };
 
 export type CreateTableItemInput = {
@@ -31,6 +36,29 @@ export type UpdateTableItemInput = {
   quantity?: number;
   consumerUids: string[];
   icon?: string | null;
+};
+
+export type ItemChangeType = "update" | "delete";
+
+export type ItemProposedData = {
+  name: string;
+  price: number;
+  quantity: number;
+  icon: string | null;
+  consumerUids: string[];
+};
+
+export type ItemPendingChange = {
+  type: ItemChangeType;
+  /** Quem propôs a alteração. */
+  proposedBy: string;
+  /** Dados propostos; null quando type === "delete". */
+  proposedData: ItemProposedData | null;
+  /** consumerUids do item (no momento da proposta) menos o proponente. */
+  awaitingUids: string[];
+  /** Subconjunto de awaitingUids que já confirmou. */
+  confirmedUids: string[];
+  createdAt: unknown;
 };
 
 export type TableItemWithId = TableItem & {

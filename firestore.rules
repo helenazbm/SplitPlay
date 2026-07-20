@@ -189,14 +189,20 @@ service cloud.firestore {
                               && request.resource.data.quantity >= 1))
                       && (!('icon' in request.resource.data)
                           || request.resource.data.icon == null
-                          || request.resource.data.icon is string);
+                          || request.resource.data.icon is string)
+                      && (!('pendingChange' in request.resource.data)
+                          || request.resource.data.pendingChange == null);
 
-        // Somente o dono do item pode editar; o dono permanece na divisão.
+        // (1) Edição direta — só item NÃO compartilhado (consumerUids.size() <= 1),
+        //     só o dono. Item compartilhado exige proposta + confirmação (blocos 2/3).
         allow update: if isSignedIn()
                       && resource.data.ownerUid == request.auth.uid
+                      && resource.data.consumerUids.size() <= 1
                       && request.resource.data.ownerUid == resource.data.ownerUid
                       && request.resource.data.consumerUids is list
                       && request.auth.uid in request.resource.data.consumerUids
+                      && request.resource.data.consumerUids.size() <= 1
+                      && request.resource.data.pendingChange == null
                       && (!('quantity' in request.resource.data)
                           || (request.resource.data.quantity is number
                               && request.resource.data.quantity >= 1))
@@ -204,9 +210,58 @@ service cloud.firestore {
                           || request.resource.data.icon == null
                           || request.resource.data.icon is string);
 
-        // Somente o dono do item pode excluir
+        // (2) Propor alteração/exclusão — qualquer consumidor de um item
+        //     compartilhado pode propor, desde que não haja proposta ativa.
+        //     Só o campo pendingChange (e updatedAt) pode mudar.
+        allow update: if isSignedIn()
+                      && resource.data.consumerUids.size() > 1
+                      && request.auth.uid in resource.data.consumerUids
+                      && resource.data.pendingChange == null
+                      && onlyChanged(['pendingChange', 'updatedAt'])
+                      && request.resource.data.pendingChange.proposedBy == request.auth.uid
+                      && request.resource.data.pendingChange.type in ['update', 'delete']
+                      && request.resource.data.pendingChange.confirmedUids == []
+                      && request.resource.data.pendingChange.awaitingUids
+                         == resource.data.consumerUids.removeAll([request.auth.uid])
+                      && (
+                           (request.resource.data.pendingChange.type == 'delete'
+                             && request.resource.data.pendingChange.proposedData == null)
+                           || (request.resource.data.pendingChange.type == 'update'
+                               && request.resource.data.pendingChange.proposedData.name is string
+                               && request.resource.data.pendingChange.proposedData.name.size() > 0
+                               && request.resource.data.pendingChange.proposedData.price is number
+                               && request.resource.data.pendingChange.proposedData.price > 0
+                               && request.resource.data.pendingChange.proposedData.consumerUids is list
+                               && request.resource.data.pendingChange.proposedData.consumerUids.size() >= 1
+                               && request.resource.data.ownerUid
+                                  in request.resource.data.pendingChange.proposedData.consumerUids)
+                         );
+
+        // (3) Responder a uma proposta ativa: confirmar (entra em confirmedUids)
+        //     ou recusar (pendingChange volta a null, cancelando a proposta). Só
+        //     quem está em awaitingUids e ainda não confirmou pode responder.
+        allow update: if isSignedIn()
+                      && resource.data.pendingChange != null
+                      && request.auth.uid in resource.data.pendingChange.awaitingUids
+                      && !(request.auth.uid in resource.data.pendingChange.confirmedUids)
+                      && onlyChanged(['pendingChange', 'updatedAt'])
+                      && (
+                           (request.resource.data.pendingChange.confirmedUids
+                              == resource.data.pendingChange.confirmedUids.concat([request.auth.uid])
+                            && request.resource.data.pendingChange.awaitingUids
+                               == resource.data.pendingChange.awaitingUids
+                            && request.resource.data.pendingChange.type == resource.data.pendingChange.type
+                            && request.resource.data.pendingChange.proposedBy == resource.data.pendingChange.proposedBy
+                            && request.resource.data.pendingChange.proposedData == resource.data.pendingChange.proposedData)
+                           || request.resource.data.pendingChange == null
+                         );
+
+        // Exclusão direta — só item NÃO compartilhado, só o dono. Item
+        // compartilhado só é excluído via proposta + confirmação, finalizada
+        // pela Cloud Function (Admin SDK, ignora rules).
         allow delete: if isSignedIn()
-                      && resource.data.ownerUid == request.auth.uid;
+                      && resource.data.ownerUid == request.auth.uid
+                      && resource.data.consumerUids.size() <= 1;
       }
     }
 

@@ -37,6 +37,8 @@ type CreateItemModalProps = {
   initialQuantity?: number;
   initialIcon?: string | null;
   initialSharedUids?: string[];
+  /** Aviso opcional (ex.: ao editar item compartilhado, explica a confirmação). */
+  noticeText?: string | null;
 };
 
 /**
@@ -58,6 +60,7 @@ export default function CreateItemModal({
   initialQuantity = 1,
   initialIcon = DEFAULT_ICON,
   initialSharedUids = [],
+  noticeText = null,
 }: CreateItemModalProps) {
   const [name, setName] = useState(initialName);
   const [price, setPrice] = useState(
@@ -313,6 +316,15 @@ export default function CreateItemModal({
             </div>
           </div>
         </div>
+
+        {!error && noticeText ? (
+          <p
+            className="font-poppins rounded-[10px_10px_25px_10px] border border-[#fdebd0] bg-[#fff7e7] px-4 py-3 text-center text-[#8a6d3b]"
+            style={{ fontSize: "var(--text-fluid-xs)" }}
+          >
+            {noticeText}
+          </p>
+        ) : null}
 
         {error ? (
           <p

@@ -4,6 +4,9 @@ import { useAuth } from "@/lib/contexts/AuthContext";
 import {
   createTableItem,
   deleteTableItem,
+  proposeItemDelete,
+  proposeItemUpdate,
+  respondToItemProposal,
   subscribeToTableItems,
   subscribeToTableParticipants,
   updateTableItem,
@@ -158,7 +161,8 @@ export default function MesaPedidosTab({
   }
 
   function beginEdit(item: TableItemWithId) {
-    if (item.ownerUid !== user?.uid) {
+    const canPropose = item.ownerUid === user?.uid || item.consumerUids.length > 1;
+    if (!canPropose) {
       return;
     }
     setEditingItemId(item.id);
@@ -175,11 +179,20 @@ export default function MesaPedidosTab({
       return;
     }
 
+    const target = items.find((it) => it.id === editingItemId);
+    if (!target) {
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
     try {
-      await updateTableItem(tableId, editingItemId, data);
+      if (target.consumerUids.length > 1) {
+        await proposeItemUpdate(tableId, editingItemId, data);
+      } else {
+        await updateTableItem(tableId, editingItemId, data);
+      }
       setEditingItemId(null);
     } catch (nextError) {
       setError(
@@ -193,19 +206,45 @@ export default function MesaPedidosTab({
   }
 
   async function handleDelete(itemId: string) {
+    const target = items.find((it) => it.id === itemId);
+    if (!target) {
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
     try {
-      await deleteTableItem(tableId, itemId);
-      if (editingItemId === itemId) {
-        setEditingItemId(null);
+      if (target.consumerUids.length > 1) {
+        await proposeItemDelete(tableId, itemId);
+      } else {
+        await deleteTableItem(tableId, itemId);
+        if (editingItemId === itemId) {
+          setEditingItemId(null);
+        }
       }
     } catch (nextError) {
       setError(
         nextError instanceof Error
           ? nextError.message
           : "Não foi possível excluir o item.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRespond(itemId: string, accept: boolean) {
+    setSaving(true);
+    setError(null);
+
+    try {
+      await respondToItemProposal(tableId, itemId, accept);
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível responder à proposta.",
       );
     } finally {
       setSaving(false);
@@ -271,6 +310,14 @@ export default function MesaPedidosTab({
         {myItems.map((item) => {
           const isOwner = item.ownerUid === user?.uid;
           const isShared = item.consumerUids.length > 1;
+          const canPropose = isOwner || isShared;
+          const pending = item.pendingChange;
+          const stillWaitingUids = pending
+            ? pending.awaitingUids.filter((uid) => !pending.confirmedUids.includes(uid))
+            : [];
+          const needsMyResponse = !!(
+            pending && user && stillWaitingUids.includes(user.uid)
+          );
 
           return (
             <article
@@ -352,83 +399,148 @@ export default function MesaPedidosTab({
                     borderTop: "0.1px solid #5F9C7D",
                   }}
                 >
-                  {isShared ? (
+                  {pending ? (
                     <div
-                      className="flex min-w-0 items-center"
+                      className="flex w-full flex-col"
                       style={{ gap: "var(--spacing-fluid-2)" }}
                     >
-                      <div className="flex -space-x-2">
-                        {item.consumerUids.slice(0, 3).map((uid) => {
-                          const p = participantByUid.get(uid);
-                          return (
-                            <Avatar
-                              key={uid}
-                              name={
-                                uid === user?.uid
-                                  ? (p?.displayName ?? "Você")
-                                  : (p?.displayName ?? "?")
-                              }
-                              avatarUrl={p?.avatarUrl}
-                              className="border-2 border-white"
-                              style={{ height: "1.5rem", width: "1.5rem" }}
-                              textStyle={{ fontSize: "0.55rem" }}
-                            />
-                          );
-                        })}
-                      </div>
                       <span
-                        className="font-poppins truncate text-[#64835b]"
+                        className="font-poppins text-[#8a6d3b]"
                         style={{ fontSize: "var(--text-fluid-xs)" }}
                       >
-                        {item.consumerUids.length} participantes
+                        {pending.type === "delete"
+                          ? "Proposta: excluir este item."
+                          : `Proposta: ${pending.proposedData?.name ?? ""} · ${brl.format(
+                              pending.proposedData?.price ?? 0,
+                            )} · ${pending.proposedData?.quantity ?? 1}x`}
                       </span>
+
+                      {needsMyResponse ? (
+                        <div
+                          className="flex items-center"
+                          style={{ gap: "var(--spacing-fluid-2)" }}
+                        >
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void handleRespond(item.id, false)}
+                            className="font-poppins flex items-center justify-center rounded-full bg-[#F1D4D3] font-semibold text-[#DA8280] transition hover:bg-[#e9c4c3] disabled:opacity-50"
+                            style={{
+                              height: "1.75rem",
+                              paddingInline: "var(--spacing-fluid-3)",
+                              fontSize: "var(--text-fluid-xs)",
+                            }}
+                          >
+                            Recusar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => void handleRespond(item.id, true)}
+                            className="font-poppins flex items-center justify-center rounded-full bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] disabled:opacity-50"
+                            style={{
+                              height: "1.75rem",
+                              paddingInline: "var(--spacing-fluid-3)",
+                              fontSize: "var(--text-fluid-xs)",
+                            }}
+                          >
+                            Confirmar
+                          </button>
+                        </div>
+                      ) : (
+                        <span
+                          className="font-poppins text-[#9bb0a4]"
+                          style={{ fontSize: "var(--text-fluid-xs)" }}
+                        >
+                          Aguardando confirmação de{" "}
+                          {stillWaitingUids
+                            .map((uid) => participantByUid.get(uid)?.displayName ?? "alguém")
+                            .join(", ")}
+                          .
+                        </span>
+                      )}
                     </div>
                   ) : (
-                    <span
-                      className="font-poppins text-[#9bb0a4]"
-                      style={{ fontSize: "var(--text-fluid-xs)" }}
-                    >
-                      
-                    </span>
-                  )}
+                    <>
+                      {isShared ? (
+                        <div
+                          className="flex min-w-0 items-center"
+                          style={{ gap: "var(--spacing-fluid-2)" }}
+                        >
+                          <div className="flex -space-x-2">
+                            {item.consumerUids.slice(0, 3).map((uid) => {
+                              const p = participantByUid.get(uid);
+                              return (
+                                <Avatar
+                                  key={uid}
+                                  name={
+                                    uid === user?.uid
+                                      ? (p?.displayName ?? "Você")
+                                      : (p?.displayName ?? "?")
+                                  }
+                                  avatarUrl={p?.avatarUrl}
+                                  className="border-2 border-white"
+                                  style={{ height: "1.5rem", width: "1.5rem" }}
+                                  textStyle={{ fontSize: "0.55rem" }}
+                                />
+                              );
+                            })}
+                          </div>
+                          <span
+                            className="font-poppins truncate text-[#64835b]"
+                            style={{ fontSize: "var(--text-fluid-xs)" }}
+                          >
+                            {item.consumerUids.length} participantes
+                          </span>
+                        </div>
+                      ) : (
+                        <span
+                          className="font-poppins text-[#9bb0a4]"
+                          style={{ fontSize: "var(--text-fluid-xs)" }}
+                        >
 
-                  {isOwner ? (
-                    <div
-                      className="flex shrink-0 items-stretch overflow-hidden rounded-full border border-[#5F9C7D]"
-                      style={{ width: "60px", height: "20px" }}
-                    >
-                      <button
-                        type="button"
-                        aria-label="Excluir item"
-                        disabled={saving}
-                        onClick={() => void handleDelete(item.id)}
-                        className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
-                      >
-                        <i
-                          aria-hidden="true"
-                          className="pi pi-trash"
-                          style={{ fontSize: "0.7rem" }}
-                        />
-                      </button>
-                      <span
-                        aria-hidden="true"
-                        className="w-px self-stretch bg-[#5F9C7D]/70"
-                      />
-                      <button
-                        type="button"
-                        aria-label="Editar item"
-                        disabled={saving}
-                        onClick={() => beginEdit(item)}
-                        className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
-                      >
-                        <i
-                          aria-hidden="true"
-                          className="pi pi-pencil"
-                          style={{ fontSize: "0.7rem" }}
-                        />
-                      </button>
-                    </div>
-                  ) : null}
+                        </span>
+                      )}
+
+                      {canPropose ? (
+                        <div
+                          className="flex shrink-0 items-stretch overflow-hidden rounded-full border border-[#5F9C7D]"
+                          style={{ width: "60px", height: "20px" }}
+                        >
+                          <button
+                            type="button"
+                            aria-label="Excluir item"
+                            disabled={saving}
+                            onClick={() => void handleDelete(item.id)}
+                            className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                          >
+                            <i
+                              aria-hidden="true"
+                              className="pi pi-trash"
+                              style={{ fontSize: "0.7rem" }}
+                            />
+                          </button>
+                          <span
+                            aria-hidden="true"
+                            className="w-px self-stretch bg-[#5F9C7D]/70"
+                          />
+                          <button
+                            type="button"
+                            aria-label="Editar item"
+                            disabled={saving}
+                            onClick={() => beginEdit(item)}
+                            className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                          >
+                            <i
+                              aria-hidden="true"
+                              className="pi pi-pencil"
+                              style={{ fontSize: "0.7rem" }}
+                            />
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               ) : null}
 
@@ -512,7 +624,14 @@ export default function MesaPedidosTab({
           onClose={() => setEditingItemId(null)}
           onSubmit={handleUpdateItem}
           title="Editar Item"
-          submitLabel="Salvar"
+          submitLabel={
+            editingItem.consumerUids.length > 1 ? "Propor alteração" : "Salvar"
+          }
+          noticeText={
+            editingItem.consumerUids.length > 1
+              ? "Este item é compartilhado: sua edição vira uma proposta e só valerá depois que todos os outros confirmarem."
+              : null
+          }
           initialName={editingItem.name}
           initialPrice={
             editingItem.quantity > 0

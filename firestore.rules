@@ -25,6 +25,12 @@ service cloud.firestore {
       );
     }
 
+    function participantPaid(tableId, uid) {
+      return get(
+        /databases/$(database)/documents/tables/$(tableId)/participants/$(uid)
+      ).data.paid == true;
+    }
+
     function onlyChanged(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -176,6 +182,7 @@ service cloud.firestore {
         // lançar um item só para outra pessoa (compartilhar inclui você).
         allow create: if isSignedIn()
                       && isParticipant(tableId)
+                      && !participantPaid(tableId, request.auth.uid)
                       && request.resource.data.ownerUid == request.auth.uid
                       && request.resource.data.name is string
                       && request.resource.data.name.size() > 0

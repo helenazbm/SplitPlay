@@ -95,7 +95,7 @@ export function subscribeToTableItems(
 
 export function subscribeToTableParticipants(
   tableId: string,
-  onChange: (participants: Array<{ uid: string; displayName: string; avatarUrl?: string | null }>) => void,
+  onChange: (participants: Array<{ uid: string; displayName: string; avatarUrl?: string | null; paid?: boolean }>) => void,
   onError?: (error: Error) => void,
 ) {
   const participantsQuery = query(
@@ -114,6 +114,7 @@ export function subscribeToTableParticipants(
             uid: String(data.uid ?? participantSnapshot.id),
             displayName: String(data.displayName ?? "Participante"),
             avatarUrl: (data.avatarUrl as string | null | undefined) ?? null,
+            paid: Boolean(data.paid),
           };
         }),
       );
@@ -131,6 +132,18 @@ export function subscribeToTableParticipants(
 export async function createTableItem(tableId: string, input: CreateTableItemInput) {
   const current = requireCurrentUser();
   const name = input.name.trim();
+
+  const participantRef = doc(db, "tables", tableId, "participants", current.uid);
+  const participantSnapshot = await getDoc(participantRef);
+
+  if (!participantSnapshot.exists()) {
+    throw new Error("Participante não encontrado na mesa.");
+  }
+
+  const participantData = participantSnapshot.data() as { paid?: boolean };
+  if (participantData.paid === true) {
+    throw new Error("Pagamento já confirmado. Não é possível adicionar novos itens.");
+  }
 
   if (!name) {
     throw new Error("Nome do item é obrigatório.");

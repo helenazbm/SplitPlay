@@ -9,6 +9,7 @@ import {
   updateTableItem,
 } from "@/lib/services/itemService";
 import type { TableItemWithId } from "@/lib/types/item";
+import type { Participant } from "@/lib/types/participant";
 import ComandaResumo from "@/components/mesa/ComandaResumo";
 import CreateItemModal from "@/components/mesa/CreateItemModal";
 import {
@@ -27,12 +28,14 @@ type MesaPedidosTabProps = {
   onCloseCreate: () => void;
   /** Couvert artístico (por pessoa) definido pelo admin. Entra como item fixo. */
   couvert?: number;
+  participants?: Participant[];
 };
 
 type ParticipantOption = {
   uid: string;
   displayName: string;
   avatarUrl?: string | null;
+  paid?: boolean;
 };
 
 const brl = new Intl.NumberFormat("pt-BR", {
@@ -45,6 +48,7 @@ export default function MesaPedidosTab({
   onOpenCreate,
   onCloseCreate,
   couvert = 0,
+  participants: participantsProp,
 }: MesaPedidosTabProps) {
   const params = useParams<{ tableId: string }>();
   const tableId = params.tableId;
@@ -73,32 +77,48 @@ export default function MesaPedidosTab({
       },
     );
 
-    const stopParticipants = subscribeToTableParticipants(
-      tableId,
-      setParticipants,
-      (nextError) => setError(nextError.message),
-    );
+    const stopParticipants = !participantsProp
+      ? subscribeToTableParticipants(
+          tableId,
+          setParticipants,
+          (nextError) => setError(nextError.message),
+        )
+      : () => {};
 
     return () => {
       stopItems();
       stopParticipants();
     };
-  }, [tableId]);
+  }, [tableId, participantsProp]);
+
+  const participantsFromProp = useMemo<ParticipantOption[]>(
+    () =>
+      (participantsProp ?? []).map((participant) => ({
+        uid: participant.uid,
+        displayName: participant.displayName,
+        avatarUrl: participant.avatarUrl ?? null,
+        paid: participant.paid,
+      })),
+    [participantsProp],
+  );
 
   const participantOptions = useMemo(
     () =>
-      participants.length > 0
-        ? participants
+      participantsFromProp.length > 0
+        ? participantsFromProp
+        : participants.length > 0
+          ? participants
         : user
           ? [
               {
                 uid: user.uid,
                 displayName: user.displayName ?? "Você",
                 avatarUrl: user.photoURL ?? null,
+                paid: false,
               },
             ]
           : [],
-    [participants, user],
+    [participantsFromProp, participants, user],
   );
 
   const participantByUid = useMemo(() => {
@@ -108,6 +128,15 @@ export default function MesaPedidosTab({
     }
     return map;
   }, [participantOptions]);
+
+  const currentParticipant = useMemo(
+    () => participantOptions.find((participant) => participant.uid === user?.uid) ?? null,
+    [participantOptions, user?.uid],
+  );
+
+  const currentParticipantPaid = currentParticipant?.paid === true;
+  const participantStatusResolved = user ? currentParticipant !== null : false;
+  const disableAddItem = currentParticipantPaid || !participantStatusResolved || saving;
 
   // A aba mostra apenas os itens que o usuário logado consome (sozinho ou compartilhado).
   const myItems = useMemo(
@@ -140,6 +169,11 @@ export default function MesaPedidosTab({
       return;
     }
 
+    if (currentParticipantPaid) {
+      setError("Pagamento já confirmado. Não é possível adicionar novos itens.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -155,6 +189,20 @@ export default function MesaPedidosTab({
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleOpenCreate() {
+    if (currentParticipantPaid) {
+      setError("Pagamento já confirmado. Não é possível adicionar novos itens.");
+      return;
+    }
+
+    if (!participantStatusResolved) {
+      setError("Aguarde um instante enquanto validamos seu status de pagamento.");
+      return;
+    }
+
+    onOpenCreate();
   }
 
   function beginEdit(item: TableItemWithId) {
@@ -234,9 +282,10 @@ export default function MesaPedidosTab({
 
         <button
           type="button"
-          onClick={onOpenCreate}
+          onClick={handleOpenCreate}
           aria-label="Adicionar item"
-          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95"
+          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95 disabled:cursor-not-allowed disabled:bg-[#d8dfda] disabled:text-[#8a9a90] disabled:active:scale-100"
+          disabled={disableAddItem}
           style={{
             height: "2rem",
             paddingInline: "var(--spacing-fluid-3)",
@@ -492,7 +541,7 @@ export default function MesaPedidosTab({
         ) : null}
       </div>
 
-      {isCreateOpen ? (
+      {isCreateOpen && !disableAddItem ? (
         <CreateItemModal
           participants={participantOptions}
           currentUid={user?.uid ?? ""}

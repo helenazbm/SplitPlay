@@ -242,7 +242,7 @@ export default function CreateItemModal({
             className="font-poppins text-[#64835b]"
             style={{ fontSize: "var(--text-fluid-xs)" }}
           >
-            Participantes:
+            Dividir com:
           </span>
 
           {/* Cards dos participantes selecionados + card "Adicionar" (abre a
@@ -522,7 +522,7 @@ export default function CreateItemModal({
                 className="font-poppins text-center text-[#9bb0a4]"
                 style={{ fontSize: "var(--text-fluid-sm)" }}
               >
-                Ninguém mais na mesa ainda.
+                Ninguém mais na mesa.
               </p>
             ) : (
               <ul

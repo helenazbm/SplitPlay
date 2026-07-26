@@ -17,11 +17,8 @@ export type ItemLastChange = {
 
 export type TableItem = {
   name: string;
-  /** Valor cheio do item (unitário × quantidade). Base do cálculo de divisão. */
   price: number;
-  /** Quantidade de unidades do item (apenas exibição; price já é o total). */
   quantity: number;
-  /** Key do ícone de comida (ver lib/foodIcons). null = sem ícone. */
   icon: string | null;
   /**
    * Participantes que já aceitaram dividir o item (fonte da verdade do
@@ -36,7 +33,9 @@ export type TableItem = {
   pendingInvites: string[];
   /** Quem criou o item. Só histórico após a criação — sem privilégio especial. */
   ownerUid: string;
+  settled: boolean;
   createdAt: unknown;
+  createdAtMs: number | null;
   updatedAt: unknown;
   lastChange: ItemLastChange | null;
 };

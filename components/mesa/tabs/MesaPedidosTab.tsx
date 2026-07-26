@@ -7,12 +7,13 @@ import {
   createTableItem,
   declineItemInvite,
   leaveItem,
+  PAID_MESSAGE,
   removeItemParticipant,
-  subscribeToTableItems,
-  subscribeToTableParticipants,
+  SETTLED_MESSAGE,
   updateItemDetails,
 } from "@/lib/services/itemService";
 import type { ItemLastChange, TableItemWithId } from "@/lib/types/item";
+import type { Participant } from "@/lib/types/participant";
 import ComandaResumo from "@/components/mesa/ComandaResumo";
 import CreateItemModal from "@/components/mesa/CreateItemModal";
 import {
@@ -25,18 +26,29 @@ import Avatar from "@/components/Avatar";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+/**
+ * Itens e participantes chegam por prop: quem assina o Firestore é a página do
+ * painel, uma vez só. Cada aba assinava os próprios listeners, e trocar de aba
+ * remontava as consultas.
+ */
 type MesaPedidosTabProps = {
   isCreateOpen: boolean;
   onOpenCreate: () => void;
   onCloseCreate: () => void;
   /** Couvert artístico (por pessoa) definido pelo admin. Entra como item fixo. */
   couvert?: number;
+  items: TableItemWithId[];
+  participants: Participant[];
+  /** Falha ao carregar os itens, vinda do listener da página. */
+  loadError?: string | null;
 };
 
 type ParticipantOption = {
   uid: string;
   displayName: string;
   avatarUrl?: string | null;
+  paid?: boolean;
+  left?: boolean;
 };
 
 type Toast = {
@@ -64,19 +76,22 @@ export default function MesaPedidosTab({
   onOpenCreate,
   onCloseCreate,
   couvert = 0,
+  items,
+  participants,
+  loadError = null,
 }: MesaPedidosTabProps) {
   const params = useParams<{ tableId: string }>();
   const tableId = params.tableId;
   const { user } = useAuth();
 
-  const [items, setItems] = useState<TableItemWithId[]>([]);
-  const [participants, setParticipants] = useState<ParticipantOption[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [dismissedLoadError, setDismissedLoadError] = useState<string | null>(
+    null,
+  );
 
   const previousItemsRef = useRef<TableItemWithId[]>([]);
   const toastSeenRef = useRef<Set<string>>(new Set());
@@ -89,108 +104,110 @@ export default function MesaPedidosTab({
     userRef.current = user;
   }, [user]);
 
+  // Aviso "fulano te removeu do item X": comparando com a rodada anterior,
+  // detecta quando o usuário deixou de estar em consumerUids/pendingInvites de
+  // um item por ação de outra pessoa (não por clique próprio) — gera um toast
+  // efêmero, já que não há central de notificações.
+  //
+  // Roda a cada nova lista de itens vinda do painel; antes vivia dentro do
+  // callback do onSnapshot deste componente. O setState aqui é reação a dado
+  // externo (Firestore), que é exatamente o caso de uso legítimo de efeito.
   useEffect(() => {
-    // loading inicia em true; as subscriptions ajustam loading/error nos
-    // callbacks (evita setState síncrono no corpo do effect — cascading renders).
-    const stopItems = subscribeToTableItems(
-      tableId,
-      (nextItems) => {
-        // Aviso "fulano te removeu do item X": comparando com a rodada
-        // anterior, detecta quando o usuário deixou de estar em
-        // consumerUids/pendingInvites de um item por ação de outra pessoa
-        // (não por clique próprio) — gera um toast efêmero, já que não há
-        // central de notificações.
-        const currentUser = userRef.current;
-        if (currentUser) {
-          const previous = previousItemsRef.current;
-          const currentById = new Map(nextItems.map((item) => [item.id, item]));
-          const newToasts: Toast[] = [];
+    const currentUser = userRef.current;
+    if (!currentUser) {
+      previousItemsRef.current = items;
+      return;
+    }
 
-          for (const prevItem of previous) {
-            const wasIn =
-              prevItem.consumerUids.includes(currentUser.uid) ||
-              prevItem.pendingInvites.includes(currentUser.uid);
-            if (!wasIn) {
-              continue;
-            }
+    const previous = previousItemsRef.current;
+    const currentById = new Map(items.map((item) => [item.id, item]));
+    const newToasts: Toast[] = [];
 
-            const current = currentById.get(prevItem.id);
-            const isInNow = current
-              ? current.consumerUids.includes(currentUser.uid) ||
-                current.pendingInvites.includes(currentUser.uid)
-              : false;
+    for (const prevItem of previous) {
+      const wasIn =
+        prevItem.consumerUids.includes(currentUser.uid) ||
+        prevItem.pendingInvites.includes(currentUser.uid);
+      if (!wasIn) {
+        continue;
+      }
 
-            if (isInNow) {
-              continue;
-            }
+      const current = currentById.get(prevItem.id);
+      const isInNow = current
+        ? current.consumerUids.includes(currentUser.uid) ||
+          current.pendingInvites.includes(currentUser.uid)
+        : false;
 
-            const lastChange = current?.lastChange ?? prevItem.lastChange;
-            if (!lastChange || lastChange.byUid === currentUser.uid) {
-              // Ação do próprio usuário (saiu/recusou) — não precisa de toast.
-              continue;
-            }
+      if (isInNow) {
+        continue;
+      }
 
-            const key = changeKey(prevItem.id, lastChange);
-            if (toastSeenRef.current.has(key)) {
-              continue;
-            }
-            toastSeenRef.current.add(key);
+      const lastChange = current?.lastChange ?? prevItem.lastChange;
+      if (!lastChange || lastChange.byUid === currentUser.uid) {
+        // Ação do próprio usuário (saiu/recusou) — não precisa de toast.
+        continue;
+      }
 
-            const byName =
-              participantByUidRef.current.get(lastChange.byUid)?.displayName ?? "Alguém";
-            const toastId = `${key}-${Date.now()}`;
-            newToasts.push({
-              id: toastId,
-              text: `${byName} removeu você do item "${prevItem.name}".`,
-            });
+      const key = changeKey(prevItem.id, lastChange);
+      if (toastSeenRef.current.has(key)) {
+        continue;
+      }
+      toastSeenRef.current.add(key);
 
-            setTimeout(() => {
-              setToasts((current) => current.filter((toast) => toast.id !== toastId));
-            }, 8000);
-          }
+      const byName =
+        participantByUidRef.current.get(lastChange.byUid)?.displayName ?? "Alguém";
+      const toastId = `${key}-${Date.now()}`;
+      newToasts.push({
+        id: toastId,
+        text: `${byName} removeu você do item "${prevItem.name}".`,
+      });
 
-          if (newToasts.length > 0) {
-            setToasts((current) => [...current, ...newToasts]);
-          }
-        }
+      setTimeout(() => {
+        setToasts((current) => current.filter((toast) => toast.id !== toastId));
+      }, 8000);
+    }
 
-        previousItemsRef.current = nextItems;
-        setItems(nextItems);
-        setLoading(false);
-        setError(null);
-      },
-      (nextError) => {
-        setError(nextError.message);
-        setLoading(false);
-      },
-    );
+    if (newToasts.length > 0) {
+      // Reação a dado externo (Firestore) chegando por prop — caso legítimo de
+      // efeito, não um estado derivável durante o render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setToasts((current) => [...current, ...newToasts]);
+    }
 
-    const stopParticipants = subscribeToTableParticipants(
-      tableId,
-      setParticipants,
-      (nextError) => setError(nextError.message),
-    );
+    previousItemsRef.current = items;
+  }, [items]);
 
-    return () => {
-      stopItems();
-      stopParticipants();
-    };
-  }, [tableId]);
+  const participantOptions = useMemo<ParticipantOption[]>(() => {
+    if (participants.length > 0) {
+      return participants.map((participant) => ({
+        uid: participant.uid,
+        displayName: participant.displayName,
+        avatarUrl: participant.avatarUrl ?? null,
+        paid: participant.paid,
+        left: participant.left,
+      }));
+    }
 
-  const participantOptions = useMemo(
+    return user
+      ? [
+          {
+            uid: user.uid,
+            displayName: user.displayName ?? "Você",
+            avatarUrl: user.photoURL ?? null,
+          },
+        ]
+      : [];
+  }, [participants, user]);
+
+  // Quem pode ser convidado para dividir um item. Quem já fechou a conta fica
+  // de fora: as rules recusariam o convite (`freeOfPaid`), então oferecer a
+  // opção só produziria erro. Nomes continuam vindo de `participantOptions`,
+  // para que itens antigos sigam exibindo quem participou.
+  const shareableParticipants = useMemo(
     () =>
-      participants.length > 0
-        ? participants
-        : user
-          ? [
-              {
-                uid: user.uid,
-                displayName: user.displayName ?? "Você",
-                avatarUrl: user.photoURL ?? null,
-              },
-            ]
-          : [],
-    [participants, user],
+      participantOptions.filter(
+        (participant) => !participant.paid && !participant.left,
+      ),
+    [participantOptions],
   );
 
   const participantByUid = useMemo(() => {
@@ -201,9 +218,20 @@ export default function MesaPedidosTab({
     return map;
   }, [participantOptions]);
 
+  const currentParticipantPaid =
+    participantByUid.get(user?.uid ?? "")?.paid === true;
+
   useEffect(() => {
     participantByUidRef.current = participantByUid;
   }, [participantByUid]);
+
+  const bannerMessage =
+    error ?? (loadError && loadError !== dismissedLoadError ? loadError : null);
+
+  function dismissErrorBanner() {
+    setError(null);
+    setDismissedLoadError(loadError ?? null);
+  }
 
   // Itens que o usuário já aceitou de fato (alimentam o rateio e o total).
   const acceptedItems = useMemo(
@@ -259,8 +287,34 @@ export default function MesaPedidosTab({
     }
   }
 
+  function isItemLocked(item: TableItemWithId): boolean {
+    if (item.settled) {
+      return true;
+    }
+
+    return item.consumerUids.some(
+      (uid) => participantByUid.get(uid)?.paid === true,
+    );
+  }
+
   function beginEdit(item: TableItemWithId) {
+    if (isItemLocked(item)) {
+      setError(SETTLED_MESSAGE);
+      return;
+    }
+
+    setError(null);
     setEditingItemId(item.id);
+  }
+
+  function handleOpenCreate() {
+    if (currentParticipantPaid) {
+      setError(PAID_MESSAGE);
+      return;
+    }
+
+    setError(null);
+    onOpenCreate();
   }
 
   async function handleUpdateItem(data: {
@@ -330,6 +384,12 @@ export default function MesaPedidosTab({
   }
 
   async function handleLeave(itemId: string) {
+    const item = items.find((entry) => entry.id === itemId);
+    if (item && isItemLocked(item)) {
+      setError(SETTLED_MESSAGE);
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -414,6 +474,8 @@ export default function MesaPedidosTab({
       aria-label="Pedidos"
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
+      <ComandaResumo itemCount={acceptedItems.length} totalReais={total} />
+
       {toasts.length > 0 ? (
         <div
           className="flex flex-col"
@@ -432,8 +494,6 @@ export default function MesaPedidosTab({
         </div>
       ) : null}
 
-      <ComandaResumo itemCount={acceptedItems.length} totalReais={total} />
-
       <div
         className="flex items-center justify-between"
         style={{ gap: "var(--spacing-fluid-2)" }}
@@ -447,7 +507,7 @@ export default function MesaPedidosTab({
 
         <button
           type="button"
-          onClick={onOpenCreate}
+          onClick={handleOpenCreate}
           aria-label="Adicionar item"
           className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95"
           style={{
@@ -462,22 +522,31 @@ export default function MesaPedidosTab({
         </button>
       </div>
 
-      {error ? (
-        <p
-          className="font-poppins rounded-[10px_10px_25px_10px] border border-[#fdebd0] bg-[#fff7e7] px-4 py-3 text-[#8a6d3b]"
-          style={{ fontSize: "var(--text-fluid-xs)" }}
+      {bannerMessage ? (
+        <div
+          role="status"
+          className="font-poppins flex items-start rounded-[10px_10px_25px_10px] border border-[#fdebd0] bg-[#fff7e7] px-4 py-3 text-[#8a6d3b]"
+          style={{
+            fontSize: "var(--text-fluid-xs)",
+            gap: "var(--spacing-fluid-2)",
+          }}
         >
-          {error}
-        </p>
-      ) : null}
+          <p className="min-w-0 flex-1">{bannerMessage}</p>
 
-      {loading ? (
-        <p
-          className="font-poppins text-[#64835b]"
-          style={{ fontSize: "var(--text-fluid-xs)" }}
-        >
-          Carregando itens...
-        </p>
+          <button
+            type="button"
+            onClick={dismissErrorBanner}
+            aria-label="Fechar aviso"
+            className="shrink-0 rounded-full text-[#8a6d3b]/60 transition hover:text-[#8a6d3b]"
+            style={{ lineHeight: 1, padding: "0.1rem" }}
+          >
+            <i
+              aria-hidden="true"
+              className="pi pi-times"
+              style={{ fontSize: "0.7rem" }}
+            />
+          </button>
+        </div>
       ) : null}
 
       {invitedItems.length > 0 ? (
@@ -507,26 +576,23 @@ export default function MesaPedidosTab({
               >
                 <div className="min-w-0">
                   <h4
-                    className="font-poppins truncate font-semibold text-[#418964]"
-                    style={{ fontSize: "var(--text-fluid-sm)" }}
+                    className="font-poppins flex items-baseline font-semibold text-[#418964]"
+                    style={{
+                      fontSize: "var(--text-fluid-sm)",
+                      gap: "0.35rem",
+                    }}
                   >
-                    {item.name}
+                    <span className="truncate">{item.name}</span>
+                    {/* Preço fora do truncate: o valor do item nunca some,
+                        por mais longo que seja o nome. */}
+                    <span className="shrink-0">- {brl.format(item.price)}</span>
                   </h4>
                   <p
                     className="font-poppins text-[#9bb0a4]"
                     style={{ fontSize: "var(--text-fluid-xs)" }}
                   >
-                    Convidado por{" "}
-                    {participantByUid.get(item.ownerUid)?.displayName ?? "alguém"} ·{" "}
-                    {brl.format(
-                      centsToReais(
-                        userItemShareCents(user?.uid ?? "", {
-                          price: item.price,
-                          consumerUids: [...item.consumerUids, user?.uid ?? ""],
-                        }),
-                      ),
-                    )}{" "}
-                    por pessoa (estimativa)
+                    {participantByUid.get(item.ownerUid)?.displayName ?? "alguém"}{" "}
+                    quer compartilhar um item
                   </p>
                 </div>
 
@@ -805,7 +871,7 @@ export default function MesaPedidosTab({
           </article>
         ) : null}
 
-        {!loading && acceptedItems.length === 0 && invitedItems.length === 0 && !hasCouvert ? (
+        {acceptedItems.length === 0 && invitedItems.length === 0 && !hasCouvert ? (
           <div className="rounded-[10px_10px_25px_10px] border border-dashed border-[#418964]/25 bg-white p-6 text-center">
             <p
               className="font-poppins text-[#64835b]"
@@ -819,7 +885,7 @@ export default function MesaPedidosTab({
 
       {isCreateOpen ? (
         <CreateItemModal
-          participants={participantOptions}
+          participants={shareableParticipants}
           currentUid={user?.uid ?? ""}
           saving={saving}
           error={error}
@@ -831,7 +897,7 @@ export default function MesaPedidosTab({
       {editingItem ? (
         <CreateItemModal
           mode="edit"
-          participants={participantOptions}
+          participants={shareableParticipants}
           currentUid={user?.uid ?? ""}
           saving={saving}
           error={error}

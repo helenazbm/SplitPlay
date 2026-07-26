@@ -1,7 +1,7 @@
 import {
+  addDoc,
   arrayRemove,
   arrayUnion,
-  addDoc,
   collection,
   doc,
   getDoc,
@@ -41,8 +41,7 @@ function normalizeItem(snapshotId: string, data: Record<string, unknown>): Table
     consumerUids = data.consumerUids.map((uid) => String(uid)).filter(Boolean);
   } else if (data.consumerUid) {
     consumerUids = [String(data.consumerUid)];
-  }
-  if (consumerUids.length === 0 && ownerUid) {
+  } else if (ownerUid) {
     consumerUids = [ownerUid];
   }
 
@@ -60,7 +59,13 @@ function normalizeItem(snapshotId: string, data: Record<string, unknown>): Table
     consumerUids,
     pendingInvites,
     ownerUid,
+    settled: data.settled === true,
     createdAt: data.createdAt,
+    // Usado pelas rodadas de consumo: item anterior ao último pagamento da
+    // pessoa não volta para a conta dela (ver isItemInCurrentRound).
+    createdAtMs:
+      (data.createdAt as { toMillis?: () => number } | null | undefined)
+        ?.toMillis?.() ?? null,
     updatedAt: data.updatedAt,
     lastChange: normalizeLastChange(data.lastChange),
   };
@@ -89,6 +94,36 @@ function normalizeLastChange(raw: unknown): ItemLastChange | null {
   };
 }
 
+function isPermissionDenied(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code: string }).code === "permission-denied"
+  );
+}
+
+/**
+ * Traduz a negativa das security rules em mensagem de usuário.
+ *
+ * As validações locais de cada função abaixo cobrem o caso comum e dão a
+ * mensagem específica; este catch só é alcançado quando as rules barram algo
+ * que o cliente não sabia — item já liquidado, ou alguém da divisão que fechou
+ * a conta (`isSettled`/`freeOfPaid` em firestore.rules).
+ */
+function toItemWriteError(error: unknown, fallback: string): Error {
+  if (isPermissionDenied(error)) {
+    return new Error(fallback);
+  }
+  return error instanceof Error ? error : new Error(fallback);
+}
+
+export const SETTLED_MESSAGE =
+  "Este item já entrou em uma conta paga e não pode mais ser alterado.";
+
+export const PAID_MESSAGE =
+  "Sua conta já foi paga. Para consumir mais, saia da mesa e entre novamente.";
+
 export function subscribeToTableItems(
   tableId: string,
   onChange: (items: TableItemWithId[]) => void,
@@ -116,41 +151,6 @@ export function subscribeToTableItems(
   );
 }
 
-export function subscribeToTableParticipants(
-  tableId: string,
-  onChange: (participants: Array<{ uid: string; displayName: string; avatarUrl?: string | null }>) => void,
-  onError?: (error: Error) => void,
-) {
-  const participantsQuery = query(
-    collection(db, "tables", tableId, "participants"),
-    orderBy("joinedAt", "asc"),
-  );
-
-  return onSnapshot(
-    participantsQuery,
-    (snapshot) => {
-      onChange(
-        snapshot.docs.map((participantSnapshot) => {
-          const data = participantSnapshot.data() as Record<string, unknown>;
-
-          return {
-            uid: String(data.uid ?? participantSnapshot.id),
-            displayName: String(data.displayName ?? "Participante"),
-            avatarUrl: (data.avatarUrl as string | null | undefined) ?? null,
-          };
-        }),
-      );
-    },
-    (error) => {
-      onError?.(
-        error instanceof Error
-          ? error
-          : new Error("Não foi possível carregar os participantes."),
-      );
-    },
-  );
-}
-
 export async function createTableItem(tableId: string, input: CreateTableItemInput) {
   const current = requireCurrentUser();
   const name = input.name.trim();
@@ -169,25 +169,25 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
     new Set(input.consumerUids.filter((uid) => Boolean(uid) && uid !== current.uid)),
   );
 
-  const itemRef = await addDoc(collection(db, "tables", tableId, "items"), {
-    name,
-    price: input.price,
-    quantity: input.quantity ?? 1,
-    icon: input.icon ?? null,
-    consumerUids: [current.uid],
-    pendingInvites,
-    ownerUid: current.uid,
-    lastChange: null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    const itemRef = await addDoc(collection(db, "tables", tableId, "items"), {
+      name,
+      price: input.price,
+      quantity: input.quantity ?? 1,
+      icon: input.icon ?? null,
+      consumerUids: [current.uid],
+      pendingInvites,
+      ownerUid: current.uid,
+      settled: false,
+      lastChange: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
 
-  await updateDoc(doc(db, "users", current.uid), {
-    ownedItemIds: arrayUnion(itemRef.id),
-    updatedAt: serverTimestamp(),
-  });
-
-  return itemRef.id;
+    return itemRef.id;
+  } catch (error) {
+    throw toItemWriteError(error, PAID_MESSAGE);
+  }
 }
 
 /** Edita nome/valor/quantidade/ícone. Vale na hora, sem aprovação de ninguém. */
@@ -225,14 +225,18 @@ export async function updateItemDetails(
     at: serverTimestamp(),
   };
 
-  await updateDoc(itemRef, {
-    name,
-    price: input.price,
-    quantity: input.quantity ?? 1,
-    icon: input.icon ?? null,
-    lastChange,
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(itemRef, {
+      name,
+      price: input.price,
+      quantity: input.quantity ?? 1,
+      icon: input.icon ?? null,
+      lastChange,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    throw toItemWriteError(error, SETTLED_MESSAGE);
+  }
 }
 
 /** Convida um novo participante. Ele só passa a dividir o item depois de aceitar. */
@@ -261,11 +265,15 @@ export async function addItemParticipant(tableId: string, itemId: string, target
     at: serverTimestamp(),
   };
 
-  await updateDoc(itemRef, {
-    pendingInvites: arrayUnion(targetUid),
-    lastChange,
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(itemRef, {
+      pendingInvites: arrayUnion(targetUid),
+      lastChange,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    throw toItemWriteError(error, SETTLED_MESSAGE);
+  }
 }
 
 /** Aceita um convite pendente: passa a dividir o item de fato. */
@@ -290,12 +298,19 @@ export async function acceptItemInvite(tableId: string, itemId: string) {
     at: serverTimestamp(),
   };
 
-  await updateDoc(itemRef, {
-    pendingInvites: arrayRemove(current.uid),
-    consumerUids: arrayUnion(current.uid),
-    lastChange,
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(itemRef, {
+      pendingInvites: arrayRemove(current.uid),
+      consumerUids: arrayUnion(current.uid),
+      lastChange,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    throw toItemWriteError(
+      error,
+      "Não foi possível aceitar: sua conta já foi fechada ou o item já entrou em uma conta paga.",
+    );
+  }
 }
 
 /** Recusa um convite pendente: não entra no item, nunca é cobrado por ele. */
@@ -320,11 +335,15 @@ export async function declineItemInvite(tableId: string, itemId: string) {
     at: serverTimestamp(),
   };
 
-  await updateDoc(itemRef, {
-    pendingInvites: arrayRemove(current.uid),
-    lastChange,
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(itemRef, {
+      pendingInvites: arrayRemove(current.uid),
+      lastChange,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    throw toItemWriteError(error, SETTLED_MESSAGE);
+  }
 }
 
 /**
@@ -353,11 +372,15 @@ export async function leaveItem(tableId: string, itemId: string) {
     at: serverTimestamp(),
   };
 
-  await updateDoc(itemRef, {
-    consumerUids: arrayRemove(current.uid),
-    lastChange,
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(itemRef, {
+      consumerUids: arrayRemove(current.uid),
+      lastChange,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    throw toItemWriteError(error, SETTLED_MESSAGE);
+  }
 }
 
 /** Remove outro participante (aceito ou convidado) do item. Vale na hora, sem aprovação. */
@@ -395,10 +418,14 @@ export async function removeItemParticipant(
     at: serverTimestamp(),
   };
 
-  await updateDoc(itemRef, {
-    consumerUids: arrayRemove(targetUid),
-    pendingInvites: arrayRemove(targetUid),
-    lastChange,
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(itemRef, {
+      consumerUids: arrayRemove(targetUid),
+      pendingInvites: arrayRemove(targetUid),
+      lastChange,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    throw toItemWriteError(error, SETTLED_MESSAGE);
+  }
 }

@@ -27,9 +27,10 @@ export default function MesaCompartilharPage() {
     if (authLoading) {
       return;
     }
-
     if (!user) {
-      router.replace(`/login?redirect=/mesa/${tableId}`);
+      router.replace(
+        `/mesa/entrar/identificacao?code=${encodeURIComponent(tableId)}`,
+      );
       return;
     }
 
@@ -48,7 +49,7 @@ export default function MesaCompartilharPage() {
         }
 
         if (table.status === "encerrada") {
-          setError("Essa mesa foi encerrada.");
+          setError("Mesa não encontrada. Confira o código.");
           return;
         }
 

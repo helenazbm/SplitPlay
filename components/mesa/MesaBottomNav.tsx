@@ -23,20 +23,15 @@ function MesaIcon(props: SVGProps<SVGSVGElement>) {
 }
 
 function HistoricoIcon(props: SVGProps<SVGSVGElement>) {
-  // li:clock (Lucide) — relógio.
+  // Receipt-style icon to represent the table total/resumo.
   return (
     <svg
       viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      fill="currentColor"
       aria-hidden="true"
       {...props}
     >
-      <circle cx="12" cy="12" r="10" />
-      <polyline points="12 6 12 12 16 14" />
+      <path d="M7 3.5h7.875c.466 0 .914.185 1.25.52l2.855 2.855c.335.336.52.784.52 1.25V19a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5Zm1 4.25a.75.75 0 0 0 0 1.5h8a.75.75 0 0 0 0-1.5H8Zm0 3a.75.75 0 0 0 0 1.5h8a.75.75 0 0 0 0-1.5H8Zm0 3a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5H8Z" />
     </svg>
   );
 }
@@ -81,9 +76,9 @@ type Tab = {
 
 const TABS: Tab[] = [
   { id: "itens", label: "Itens", Icon: ItensIcon },
-  { id: "mesa", label: "Mesa", Icon: MesaIcon },
-  { id: "historico", label: "Histórico", Icon: HistoricoIcon },
-  { id: "pagamento", label: "Pagamento", Icon: PagamentoIcon },
+  { id: "mesa", label: "Participantes", Icon: MesaIcon },
+  { id: "pagamento", label: "Pagar", Icon: PagamentoIcon },
+  { id: "historico", label: "Resumo", Icon: HistoricoIcon },
   { id: "ajustes", label: "Ajustes", Icon: AjustesIcon, adminOnly: true },
 ];
 

@@ -25,6 +25,30 @@ service cloud.firestore {
       );
     }
 
+    // Quem já fechou a conta, desnormalizado no doc da mesa. Existe porque rules
+    // não têm laço: não dá para ler `participants/{uid}.paid` de cada uid de
+    // `consumerUids`. Aqui vira um get() só + operação de conjunto.
+    // O default [] mantém compatibilidade com mesas criadas antes deste campo.
+    function paidUidsOf(tableId) {
+      return get(
+        /databases/$(database)/documents/tables/$(tableId)
+      ).data.get('paidUids', []).toSet();
+    }
+
+    // Um item não pode NASCER incluindo quem já fechou a conta e foi embora:
+    // ele seria cobrado à revelia. Quem paga e VOLTA sai de `paidUids`, então
+    // volta a ser incluível — é assim que a reentrada destrava a participação.
+    function freeOfPaid(tableId, consumerUids) {
+      return !consumerUids.toSet().hasAny(paidUidsOf(tableId));
+    }
+
+    // Item liquidado: algum consumidor já pagou por ele. Congela para sempre —
+    // editar ou excluir mudaria o valor de uma conta já fechada. Diferente de
+    // `freeOfPaid`, não afrouxa quando o pagante volta a consumir.
+    function isSettled() {
+      return resource.data.get('settled', false) == true;
+    }
+
     function onlyChanged(keys) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
@@ -46,14 +70,22 @@ service cloud.firestore {
                         || request.resource.data.photoURL == null
                         || request.resource.data.photoURL is string);
 
-      // Atualização: só o dono. uid/type/createdAt/coins são imutáveis pelo client
-      // (coins só muda via Admin SDK). currentTableId só pode:
+      // Atualização: só o dono. uid/createdAt/coins são imutáveis pelo client
+      // (coins só muda via Admin SDK). `type` só pode ficar igual OU subir de
+      // 'anonymous' -> 'registered' (converter convidado em conta; mão única,
+      // nunca o contrário). currentTableId só pode:
       //   - ficar igual,
       //   - ir de null -> id (entrar/criar mesa),
       //   - ir de id -> null (sair da mesa).
       allow update: if isSelf(userId)
                     && request.resource.data.uid == resource.data.uid
-                    && request.resource.data.type == resource.data.type
+                    && (
+                      request.resource.data.type == resource.data.type
+                      || (
+                        resource.data.type == 'anonymous'
+                        && request.resource.data.type == 'registered'
+                      )
+                    )
                     && request.resource.data.createdAt == resource.data.createdAt
                     && request.resource.data.coins == resource.data.coins
                     && (
@@ -91,16 +123,27 @@ service cloud.firestore {
                     && request.resource.data.tipPercent is number
                     && request.resource.data.tipPercent >= 0
                     && request.resource.data.couvertSuggested is number
-                    && request.resource.data.couvertSuggested >= 0;
+                    && request.resource.data.couvertSuggested >= 0
+                    && request.resource.data.paidUids == [];
 
-      // Atualização: só o admin atual; status restrito. adminUid é imutável,
-      // exceto na transferência de administração para outro participante da mesa.
+      // Atualização: só o admin, e só a config da mesa.
       allow update: if isSignedIn()
-                    && resource.data.adminUid == request.auth.uid
-                    && request.resource.data.status in ['aberta', 'encerrada']
                     && (
-                      request.resource.data.adminUid == resource.data.adminUid
-                      || exists(/databases/$(database)/documents/tables/$(tableId)/participants/$(request.resource.data.adminUid))
+                      // (a) Admin edita a config da mesa. Não mexe em paidUids.
+                      (
+                        resource.data.adminUid == request.auth.uid
+                        && request.resource.data.status in ['aberta', 'encerrada']
+                        && (
+                          request.resource.data.adminUid == resource.data.adminUid
+                          || exists(/databases/$(database)/documents/tables/$(tableId)/participants/$(request.resource.data.adminUid))
+                        )
+                        && request.resource.data.get('paidUids', [])
+                           == resource.data.get('paidUids', [])
+                      )
+                      // `paidUids` NÃO tem caminho pelo cliente: entra em
+                      // `registerPayment` e sai em `reopenParticipation`, ambas
+                      // Cloud Functions com Admin SDK. Deixar o cliente mexer
+                      // aqui é deixá-lo se declarar pago.
                     );
 
       match /participants/{participantId} {
@@ -119,18 +162,23 @@ service cloud.firestore {
                       && request.resource.data.uid == participantId
                       && request.resource.data.isAnonymous is bool
                       && request.resource.data.paid == false
-                      && request.resource.data.paidAmount == 0
                       && request.resource.data.paidAt == null
                       && request.resource.data.tipEnabled is bool
                       && request.resource.data.subtotalCents == 0
                       && request.resource.data.totalCents == 0
+                      && request.resource.data.settledSubtotalCents == 0
+                      && request.resource.data.paidTotalCents == 0
+                      && request.resource.data.settledThroughAt == null
+                      && request.resource.data.couvertSettled == false
                       && tableStatus(tableId) == 'aberta';
 
-        // Atualização (só o próprio, mesa aberta):
-        // (1) Gorjeta opcional — apenas tipEnabled, antes de pagar.
-        // (2) Registrar pagamento — paid / paidAmount / paidAt.
-        // Identidade e subtotalCents/totalCents são imutáveis no client
-        // (totais só mudam via Cloud Functions / Admin SDK).
+        // Atualização pelo CLIENTE: só gorjeta e saída/volta.
+        //
+        // Pagamento (`paid`, `paidTotalCents`, `settledThroughAt`, ...) e
+        // reabertura de rodada saem exclusivamente pelas Cloud Functions
+        // `registerPayment` / `reopenParticipation`, que rodam com Admin SDK e
+        // ignoram estas rules. Quem escreve `paid` escreve quanto deve — por
+        // isso o cliente não tem esse caminho.
         allow update: if isSelf(participantId)
                       && tableStatus(tableId) == 'aberta'
                       && request.resource.data.uid == resource.data.uid
@@ -140,26 +188,36 @@ service cloud.firestore {
                       && request.resource.data.subtotalCents == resource.data.subtotalCents
                       && request.resource.data.totalCents == resource.data.totalCents
                       && (
+                        // (1) Gorjeta opcional, antes de pagar a rodada atual.
                         (
                           resource.data.paid == false
                           && onlyChanged(['tipEnabled'])
                           && request.resource.data.tipEnabled is bool
-                          && request.resource.data.paid == false
                         )
+                        // (2) Sair da mesa / voltar para ela. Permitido mesmo
+                        // depois de pagar: quem já quitou pode ir embora, e o
+                        // doc fica como histórico do que foi pago.
                         || (
-                          resource.data.paid == false
-                          && onlyChanged(['paid', 'paidAmount', 'paidAt'])
-                          && request.resource.data.paid == true
-                          && request.resource.data.paidAmount is number
-                          && request.resource.data.paidAmount >= 0
-                          && request.resource.data.paidAt is timestamp
-                          && request.resource.data.tipEnabled == resource.data.tipEnabled
+                          onlyChanged(['left'])
+                          && request.resource.data.left is bool
                         )
                       );
 
-        // Sair: você mesmo; ou o admin remove um participante.
-        allow delete: if isSelf(participantId)
-                      || (isSignedIn() && tableAdminUid(tableId) == request.auth.uid);
+        // O doc do participante não é apagado ao sair (vira `left: true`, para
+        // preservar o histórico financeiro). Só o admin remove de fato.
+        allow delete: if isSignedIn() && tableAdminUid(tableId) == request.auth.uid;
+
+        // Histórico de pagamentos da pessoa (uma rodada por doc). Escrito só
+        // pelo Admin SDK; o cliente lê para montar o extrato.
+        match /payments/{paymentId} {
+          allow read: if isSignedIn()
+                      && (
+                        request.auth.uid == participantId
+                        || tableAdminUid(tableId) == request.auth.uid
+                        || isParticipant(tableId)
+                      );
+          allow write: if false;
+        }
       }
 
       match /items/{itemId} {
@@ -174,8 +232,15 @@ service cloud.firestore {
         // Participante cria um item cujo dono é ele mesmo. Só o criador entra
         // aceito (consumerUids); qualquer outro selecionado no modal entra em
         // pendingInvites e só passa a dividir o item depois de aceitar.
+        //
+        // Ninguém que já fechou a conta pode ser envolvido — nem como criador
+        // (seria cobrado de novo), nem como convidado (o aceite diluiria a
+        // parte de quem já pagou).
         allow create: if isSignedIn()
                       && isParticipant(tableId)
+                      && freeOfPaid(tableId, request.resource.data.consumerUids)
+                      && freeOfPaid(tableId, request.resource.data.pendingInvites)
+                      && request.resource.data.get('settled', false) == false
                       && request.resource.data.ownerUid == request.auth.uid
                       && request.resource.data.name is string
                       && request.resource.data.name.size() > 0
@@ -195,8 +260,16 @@ service cloud.firestore {
 
         // (1) Editar nome/valor/quantidade/ícone — qualquer consumidor aceito,
         //     vale na hora, sem aprovação de ninguém.
+        //
+        //     Mudar o `price` muda a conta de todo mundo que divide o item, então
+        //     vale o mesmo congelamento da main: item já liquidado é intocável
+        //     (`isSettled`) e nenhum item que alguém quitado divide pode ser
+        //     alterado (`freeOfPaid`). `settled` fica de fora do `onlyChanged`,
+        //     o que já o torna imutável pelo cliente.
         allow update: if isSignedIn()
                       && request.auth.uid in resource.data.consumerUids
+                      && !isSettled()
+                      && freeOfPaid(tableId, resource.data.get('consumerUids', []))
                       && onlyChanged(['name', 'price', 'quantity', 'icon', 'updatedAt', 'lastChange'])
                       && request.resource.data.name is string
                       && request.resource.data.name.size() > 0
@@ -213,8 +286,14 @@ service cloud.firestore {
 
         // (2) Convidar um novo participante — qualquer consumidor aceito pode
         //     propor; o alvo entra em pendingInvites, ainda não divide o item.
+        //
+        //     Convidar não muda valor nenhum, mas convidar quem já fechou a
+        //     conta cria um convite que o aceite (3) vai recusar para sempre.
+        //     Barra na origem.
         allow update: if isSignedIn()
                       && request.auth.uid in resource.data.consumerUids
+                      && !isSettled()
+                      && freeOfPaid(tableId, [request.resource.data.lastChange.targetUid])
                       && onlyChanged(['pendingInvites', 'updatedAt', 'lastChange'])
                       && request.resource.data.lastChange.type == 'invite'
                       && request.resource.data.lastChange.byUid == request.auth.uid
@@ -226,6 +305,13 @@ service cloud.firestore {
 
         // (3) Responder a um convite — só o próprio convidado, sobre o
         //     próprio uid: aceitar (entra em consumerUids) ou recusar.
+        //
+        //     Aceitar rateia o item entre mais uma pessoa, o que ENCOLHE a parte
+        //     de quem já dividia: se algum deles já pagou, a conta dele mudaria
+        //     depois do fato. Por isso o ramo 'accept' exige item não liquidado
+        //     e ninguém quitado na divisão. Recusar não mexe em valor e segue
+        //     livre — senão um convite feito antes do pagamento ficaria preso
+        //     para sempre.
         allow update: if isSignedIn()
                       && request.auth.uid in resource.data.pendingInvites
                       && onlyChanged(['consumerUids', 'pendingInvites', 'updatedAt', 'lastChange'])
@@ -234,6 +320,9 @@ service cloud.firestore {
                       && request.resource.data.lastChange.byUid == request.auth.uid
                       && (
                            (request.resource.data.lastChange.type == 'accept'
+                            && !isSettled()
+                            && freeOfPaid(tableId, resource.data.get('consumerUids', []))
+                            && freeOfPaid(tableId, [request.auth.uid])
                             && request.resource.data.consumerUids
                                == resource.data.consumerUids.concat([request.auth.uid]))
                            || (request.resource.data.lastChange.type == 'decline'
@@ -242,8 +331,13 @@ service cloud.firestore {
 
         // (4) Autoexcluir-se — qualquer consumidor aceito, sobre o próprio
         //     uid, sem aprovação de ninguém.
+        //
+        //     Sair AUMENTA a parte de quem fica; item liquidado ou com alguém
+        //     já quitado na divisão fica congelado.
         allow update: if isSignedIn()
                       && request.auth.uid in resource.data.consumerUids
+                      && !isSettled()
+                      && freeOfPaid(tableId, resource.data.get('consumerUids', []))
                       && onlyChanged(['consumerUids', 'updatedAt', 'lastChange'])
                       && request.resource.data.consumerUids
                          == resource.data.consumerUids.removeAll([request.auth.uid])
@@ -252,8 +346,13 @@ service cloud.firestore {
 
         // (5) Remover outro participante (aceito ou convidado) — qualquer
         //     consumidor aceito pode remover, sem aprovação de ninguém.
+        //
+        //     Mesma razão de (4): remover alguém redistribui o item entre os
+        //     restantes.
         allow update: if isSignedIn()
                       && request.auth.uid in resource.data.consumerUids
+                      && !isSettled()
+                      && freeOfPaid(tableId, resource.data.get('consumerUids', []))
                       && onlyChanged(['consumerUids', 'pendingInvites', 'updatedAt', 'lastChange'])
                       && request.resource.data.lastChange.type == 'remove'
                       && request.resource.data.lastChange.byUid == request.auth.uid
@@ -269,7 +368,9 @@ service cloud.firestore {
 
         // Sem allow delete: a exclusão do item (quando consumerUids e
         // pendingInvites ficam ambos vazios) só acontece via Cloud Function
-        // (Admin SDK, ignora rules).
+        // (Admin SDK, ignora rules). Substitui o `allow delete` do dono que
+        // existia na main — aqui o item não tem dono com privilégio, some
+        // sozinho quando a última pessoa sai dele.
       }
     }
 

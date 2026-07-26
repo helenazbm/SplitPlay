@@ -97,12 +97,6 @@ export default function MesaHistoricoTab({
       aria-label="Histórico"
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
-      <h2
-        className="font-poppins font-black text-[#da8280]"
-        style={{ fontSize: "20px" }}
-      >
-        Histórico
-      </h2>
 
       <div className="flex justify-center">
         <ComandaCard
@@ -155,12 +149,12 @@ export default function MesaHistoricoTab({
             <div className="flex flex-col items-center" style={COMANDA_DIVIDER}>
               <span
                 className="font-poppins text-[#7C7D7D]"
-                style={{ fontSize: "15px", fontWeight: 800 }}
+                style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.02em" }}
               >
-                Total da Mesa
+                Total sem %
               </span>
               <span
-                className="font-poppins flex items-center font-black text-[#519472]"
+                className="font-poppins flex items-center font-semibold text-[#519472]"
                 style={{
                   gap: "var(--spacing-fluid-2)",
                   fontSize: "24px",
@@ -175,7 +169,7 @@ export default function MesaHistoricoTab({
             <div className="flex items-center justify-between">
               <span
                 className="font-poppins text-[#7C7D7D]"
-                style={{ fontSize: "15px", fontWeight: 800 }}
+                style={{ fontSize: "15px", fontWeight: 500 }}
               >
                 Garçom ({tipPercent}%)
               </span>
@@ -183,7 +177,7 @@ export default function MesaHistoricoTab({
                 className="font-poppins font-bold text-[#7C7D7D]"
                 style={{ fontSize: "15px" }}
               >
-                {formatCurrency(gorjetaCents)}
+                + {formatCurrency(gorjetaCents)}
               </span>
             </div>
 
@@ -191,16 +185,16 @@ export default function MesaHistoricoTab({
 
             <div className="flex flex-col items-center" style={COMANDA_DIVIDER}>
               <span
-                className="font-poppins text-[#519472]"
-                style={{ fontSize: "15px", fontWeight: 800 }}
+                className="font-poppins text-[#7C7D7D]"
+                style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "0.02em" }}
               >
-                Total com % do Garçom
+                Total com %
               </span>
               <span
-                className="font-poppins flex items-center font-black text-[#519472]"
+                className="font-poppins flex items-center font-semibold text-[#519472]"
                 style={{
                   gap: "var(--spacing-fluid-2)",
-                  fontSize: "26px",
+                  fontSize: "24px",
                   marginTop: "var(--spacing-fluid-1)",
                 }}
               >
@@ -267,7 +261,7 @@ function HistoricoStat({ label, value, valueColor, icon }: HistoricoStatProps) {
     >
       <span
         className="font-poppins text-[#7C7D7D]"
-        style={{ fontSize: "15px", fontWeight: 800, lineHeight: "normal" }}
+        style={{ fontSize: "15px", fontWeight: 600, lineHeight: "normal" }}
       >
         {label}
       </span>

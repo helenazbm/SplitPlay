@@ -1,9 +1,8 @@
 import {
-  addDoc,
   arrayRemove,
   arrayUnion,
+  addDoc,
   collection,
-  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
@@ -16,10 +15,10 @@ import {
 import { auth, db } from "@/lib/firebase";
 import type {
   CreateTableItemInput,
-  ItemPendingChange,
+  ItemLastChange,
   TableItem,
   TableItemWithId,
-  UpdateTableItemInput,
+  UpdateItemDetailsInput,
 } from "@/lib/types/item";
 
 function requireCurrentUser() {
@@ -47,6 +46,11 @@ function normalizeItem(snapshotId: string, data: Record<string, unknown>): Table
     consumerUids = [ownerUid];
   }
 
+  // pendingInvites é novo; docs antigos não têm o campo — compat = lista vazia.
+  const pendingInvites = Array.isArray(data.pendingInvites)
+    ? data.pendingInvites.map((uid) => String(uid)).filter(Boolean)
+    : [];
+
   return {
     id: snapshotId,
     name: String(data.name ?? ""),
@@ -54,60 +58,35 @@ function normalizeItem(snapshotId: string, data: Record<string, unknown>): Table
     quantity: Number(data.quantity ?? 1) || 1,
     icon: data.icon ? String(data.icon) : null,
     consumerUids,
+    pendingInvites,
     ownerUid,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
-    pendingChange: normalizePendingChange(data.pendingChange),
+    lastChange: normalizeLastChange(data.lastChange),
   };
 }
 
-function normalizePendingChange(raw: unknown): ItemPendingChange | null {
+function normalizeLastChange(raw: unknown): ItemLastChange | null {
   if (!raw || typeof raw !== "object") {
     return null;
   }
 
   const data = raw as Record<string, unknown>;
-  const type = data.type === "delete" ? "delete" : data.type === "update" ? "update" : null;
-  if (!type) {
+  const validTypes = ["update", "invite", "accept", "decline", "leave", "remove"];
+  const type = validTypes.includes(data.type as string)
+    ? (data.type as ItemLastChange["type"])
+    : null;
+
+  if (!type || !data.byUid) {
     return null;
-  }
-
-  const awaitingUids = Array.isArray(data.awaitingUids)
-    ? data.awaitingUids.map((uid) => String(uid)).filter(Boolean)
-    : [];
-  const confirmedUids = Array.isArray(data.confirmedUids)
-    ? data.confirmedUids.map((uid) => String(uid)).filter(Boolean)
-    : [];
-
-  let proposedData = null as ItemPendingChange["proposedData"];
-  if (type === "update" && data.proposedData && typeof data.proposedData === "object") {
-    const proposed = data.proposedData as Record<string, unknown>;
-    proposedData = {
-      name: String(proposed.name ?? ""),
-      price: Number(proposed.price ?? 0),
-      quantity: Number(proposed.quantity ?? 1) || 1,
-      icon: proposed.icon ? String(proposed.icon) : null,
-      consumerUids: Array.isArray(proposed.consumerUids)
-        ? proposed.consumerUids.map((uid) => String(uid)).filter(Boolean)
-        : [],
-    };
   }
 
   return {
     type,
-    proposedBy: String(data.proposedBy ?? ""),
-    proposedData,
-    awaitingUids,
-    confirmedUids,
-    createdAt: data.createdAt,
+    byUid: String(data.byUid),
+    targetUid: data.targetUid ? String(data.targetUid) : null,
+    at: data.at,
   };
-}
-
-/** Normaliza/valida o conjunto de quem divide o item: dono sempre incluído, sem repetições. */
-function buildConsumerUids(ownerUid: string, consumerUids: string[]): string[] {
-  const unique = new Set(consumerUids.filter(Boolean));
-  unique.add(ownerUid);
-  return Array.from(unique);
 }
 
 export function subscribeToTableItems(
@@ -184,16 +163,21 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
     throw new Error("Informe um valor válido.");
   }
 
-  const consumerUids = buildConsumerUids(current.uid, input.consumerUids);
+  // Quem cria entra aceito de cara; os demais selecionados entram como
+  // convite pendente (só passam a dividir o item depois que aceitarem).
+  const pendingInvites = Array.from(
+    new Set(input.consumerUids.filter((uid) => Boolean(uid) && uid !== current.uid)),
+  );
 
   const itemRef = await addDoc(collection(db, "tables", tableId, "items"), {
     name,
     price: input.price,
     quantity: input.quantity ?? 1,
     icon: input.icon ?? null,
-    consumerUids,
+    consumerUids: [current.uid],
+    pendingInvites,
     ownerUid: current.uid,
-    pendingChange: null,
+    lastChange: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -206,10 +190,11 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
   return itemRef.id;
 }
 
-export async function updateTableItem(
+/** Edita nome/valor/quantidade/ícone. Vale na hora, sem aprovação de ninguém. */
+export async function updateItemDetails(
   tableId: string,
   itemId: string,
-  input: UpdateTableItemInput,
+  input: UpdateItemDetailsInput,
 ) {
   const current = requireCurrentUser();
   const itemRef = doc(db, "tables", tableId, "items", itemId);
@@ -220,12 +205,8 @@ export async function updateTableItem(
   }
 
   const item = snapshot.data() as TableItem;
-  if (item.ownerUid !== current.uid) {
-    throw new Error("Apenas o dono pode editar este item.");
-  }
-
-  if (item.consumerUids.length > 1) {
-    throw new Error("Item compartilhado: proponha a alteração com proposeItemUpdate.");
+  if (!item.consumerUids.includes(current.uid)) {
+    throw new Error("Você não participa deste item.");
   }
 
   const name = input.name.trim();
@@ -236,18 +217,26 @@ export async function updateTableItem(
   if (!Number.isFinite(input.price) || input.price <= 0) {
     throw new Error("Informe um valor válido.");
   }
+
+  const lastChange: ItemLastChange = {
+    type: "update",
+    byUid: current.uid,
+    targetUid: null,
+    at: serverTimestamp(),
+  };
 
   await updateDoc(itemRef, {
     name,
     price: input.price,
     quantity: input.quantity ?? 1,
     icon: input.icon ?? null,
-    consumerUids: buildConsumerUids(current.uid, input.consumerUids),
+    lastChange,
     updatedAt: serverTimestamp(),
   });
 }
 
-export async function deleteTableItem(tableId: string, itemId: string) {
+/** Convida um novo participante. Ele só passa a dividir o item depois de aceitar. */
+export async function addItemParticipant(tableId: string, itemId: string, targetUid: string) {
   const current = requireCurrentUser();
   const itemRef = doc(db, "tables", tableId, "items", itemId);
   const snapshot = await getDoc(itemRef);
@@ -257,93 +246,30 @@ export async function deleteTableItem(tableId: string, itemId: string) {
   }
 
   const item = snapshot.data() as TableItem;
-  if (item.ownerUid !== current.uid) {
-    throw new Error("Apenas o dono pode excluir este item.");
-  }
-
-  if (item.consumerUids.length > 1) {
-    throw new Error("Item compartilhado: proponha a exclusão com proposeItemDelete.");
-  }
-
-  await deleteDoc(itemRef);
-
-  await updateDoc(doc(db, "users", current.uid), {
-    ownedItemIds: arrayRemove(itemId),
-    updatedAt: serverTimestamp(),
-  });
-}
-
-/**
- * Propõe uma edição em um item compartilhado. Qualquer consumidor do item
- * (dono ou não) pode propor; a mudança só é aplicada de fato (pela Cloud
- * Function) quando todos os outros consumidores confirmarem.
- */
-export async function proposeItemUpdate(
-  tableId: string,
-  itemId: string,
-  input: UpdateTableItemInput,
-) {
-  const current = requireCurrentUser();
-  const itemRef = doc(db, "tables", tableId, "items", itemId);
-  const snapshot = await getDoc(itemRef);
-
-  if (!snapshot.exists()) {
-    throw new Error("Item não encontrado.");
-  }
-
-  const item = snapshot.data() as TableItem;
-
-  if (item.consumerUids.length <= 1) {
-    throw new Error("Item não é compartilhado.");
-  }
-
-  if (item.pendingChange) {
-    throw new Error("Já existe uma proposta pendente para este item.");
-  }
-
   if (!item.consumerUids.includes(current.uid)) {
     throw new Error("Você não participa deste item.");
   }
 
-  const name = input.name.trim();
-  if (!name) {
-    throw new Error("Nome do item é obrigatório.");
+  if (item.consumerUids.includes(targetUid) || item.pendingInvites.includes(targetUid)) {
+    throw new Error("Este participante já está no item.");
   }
 
-  if (!Number.isFinite(input.price) || input.price <= 0) {
-    throw new Error("Informe um valor válido.");
-  }
-
-  // Força o dono real do item (não quem propõe) a permanecer na divisão.
-  const proposedConsumerUids = buildConsumerUids(item.ownerUid, input.consumerUids);
-  const awaitingUids = item.consumerUids.filter((uid) => uid !== current.uid);
-
-  const pendingChange: ItemPendingChange = {
-    type: "update",
-    proposedBy: current.uid,
-    proposedData: {
-      name,
-      price: input.price,
-      quantity: input.quantity ?? 1,
-      icon: input.icon ?? null,
-      consumerUids: proposedConsumerUids,
-    },
-    awaitingUids,
-    confirmedUids: [],
-    createdAt: serverTimestamp(),
+  const lastChange: ItemLastChange = {
+    type: "invite",
+    byUid: current.uid,
+    targetUid,
+    at: serverTimestamp(),
   };
 
   await updateDoc(itemRef, {
-    pendingChange,
+    pendingInvites: arrayUnion(targetUid),
+    lastChange,
     updatedAt: serverTimestamp(),
   });
 }
 
-/**
- * Propõe a exclusão de um item compartilhado. Só é excluído de fato (pela
- * Cloud Function) quando todos os outros consumidores confirmarem.
- */
-export async function proposeItemDelete(tableId: string, itemId: string) {
+/** Aceita um convite pendente: passa a dividir o item de fato. */
+export async function acceptItemInvite(tableId: string, itemId: string) {
   const current = requireCurrentUser();
   const itemRef = doc(db, "tables", tableId, "items", itemId);
   const snapshot = await getDoc(itemRef);
@@ -353,45 +279,99 @@ export async function proposeItemDelete(tableId: string, itemId: string) {
   }
 
   const item = snapshot.data() as TableItem;
-
-  if (item.consumerUids.length <= 1) {
-    throw new Error("Item não é compartilhado.");
+  if (!item.pendingInvites.includes(current.uid)) {
+    throw new Error("Você não tem convite pendente para este item.");
   }
 
-  if (item.pendingChange) {
-    throw new Error("Já existe uma proposta pendente para este item.");
+  const lastChange: ItemLastChange = {
+    type: "accept",
+    byUid: current.uid,
+    targetUid: null,
+    at: serverTimestamp(),
+  };
+
+  await updateDoc(itemRef, {
+    pendingInvites: arrayRemove(current.uid),
+    consumerUids: arrayUnion(current.uid),
+    lastChange,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Recusa um convite pendente: não entra no item, nunca é cobrado por ele. */
+export async function declineItemInvite(tableId: string, itemId: string) {
+  const current = requireCurrentUser();
+  const itemRef = doc(db, "tables", tableId, "items", itemId);
+  const snapshot = await getDoc(itemRef);
+
+  if (!snapshot.exists()) {
+    throw new Error("Item não encontrado.");
   }
 
+  const item = snapshot.data() as TableItem;
+  if (!item.pendingInvites.includes(current.uid)) {
+    throw new Error("Você não tem convite pendente para este item.");
+  }
+
+  const lastChange: ItemLastChange = {
+    type: "decline",
+    byUid: current.uid,
+    targetUid: null,
+    at: serverTimestamp(),
+  };
+
+  await updateDoc(itemRef, {
+    pendingInvites: arrayRemove(current.uid),
+    lastChange,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Autoexclusão: remove a própria participação do item, sem aprovação de
+ * ninguém. Serve também para "excluir" um item onde você é o único
+ * participante — a Cloud Function apaga o doc quando ele fica vazio.
+ */
+export async function leaveItem(tableId: string, itemId: string) {
+  const current = requireCurrentUser();
+  const itemRef = doc(db, "tables", tableId, "items", itemId);
+  const snapshot = await getDoc(itemRef);
+
+  if (!snapshot.exists()) {
+    throw new Error("Item não encontrado.");
+  }
+
+  const item = snapshot.data() as TableItem;
   if (!item.consumerUids.includes(current.uid)) {
     throw new Error("Você não participa deste item.");
   }
 
-  const pendingChange: ItemPendingChange = {
-    type: "delete",
-    proposedBy: current.uid,
-    proposedData: null,
-    awaitingUids: item.consumerUids.filter((uid) => uid !== current.uid),
-    confirmedUids: [],
-    createdAt: serverTimestamp(),
+  const lastChange: ItemLastChange = {
+    type: "leave",
+    byUid: current.uid,
+    targetUid: null,
+    at: serverTimestamp(),
   };
 
   await updateDoc(itemRef, {
-    pendingChange,
+    consumerUids: arrayRemove(current.uid),
+    lastChange,
     updatedAt: serverTimestamp(),
   });
 }
 
-/**
- * Responde a uma proposta pendente de edição/exclusão. Confirmar entra em
- * confirmedUids (a Cloud Function aplica a mudança quando todos confirmarem);
- * recusar cancela a proposta imediatamente, sem alterar o item.
- */
-export async function respondToItemProposal(
+/** Remove outro participante (aceito ou convidado) do item. Vale na hora, sem aprovação. */
+export async function removeItemParticipant(
   tableId: string,
   itemId: string,
-  accept: boolean,
+  targetUid: string,
 ) {
   const current = requireCurrentUser();
+
+  if (targetUid === current.uid) {
+    throw new Error("Para remover a si mesmo, use a opção de sair do item.");
+  }
+
   const itemRef = doc(db, "tables", tableId, "items", itemId);
   const snapshot = await getDoc(itemRef);
 
@@ -400,29 +380,25 @@ export async function respondToItemProposal(
   }
 
   const item = snapshot.data() as TableItem;
-  const pending = item.pendingChange;
-
-  if (!pending) {
-    throw new Error("Não há proposta pendente para este item.");
+  if (!item.consumerUids.includes(current.uid)) {
+    throw new Error("Você não participa deste item.");
   }
 
-  if (!pending.awaitingUids.includes(current.uid)) {
-    throw new Error("Você não precisa confirmar esta alteração.");
+  if (!item.consumerUids.includes(targetUid) && !item.pendingInvites.includes(targetUid)) {
+    throw new Error("Este participante não está no item.");
   }
 
-  if (pending.confirmedUids.includes(current.uid)) {
-    throw new Error("Você já confirmou esta alteração.");
-  }
+  const lastChange: ItemLastChange = {
+    type: "remove",
+    byUid: current.uid,
+    targetUid,
+    at: serverTimestamp(),
+  };
 
-  if (accept) {
-    await updateDoc(itemRef, {
-      "pendingChange.confirmedUids": arrayUnion(current.uid),
-      updatedAt: serverTimestamp(),
-    });
-  } else {
-    await updateDoc(itemRef, {
-      pendingChange: null,
-      updatedAt: serverTimestamp(),
-    });
-  }
+  await updateDoc(itemRef, {
+    consumerUids: arrayRemove(targetUid),
+    pendingInvites: arrayRemove(targetUid),
+    lastChange,
+    updatedAt: serverTimestamp(),
+  });
 }

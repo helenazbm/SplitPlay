@@ -39,6 +39,16 @@ type CreateItemModalProps = {
   initialSharedUids?: string[];
   /** Aviso opcional (ex.: ao editar item compartilhado, explica a confirmação). */
   noticeText?: string | null;
+  /**
+   * "create": participantes ficam num rascunho local, só vão pro Firestore
+   * ao Salvar. "edit": convidar/remover participante vale na hora (chama
+   * onInviteParticipant/onRemoveParticipant); "Salvar" só manda nome/valor.
+   */
+  mode?: "create" | "edit";
+  /** Modo edit: uids (exceto o próprio) que já foram convidados e aguardam aceite. */
+  initialPendingUids?: string[];
+  onInviteParticipant?: (uid: string) => void;
+  onRemoveParticipant?: (uid: string) => void;
 };
 
 /**
@@ -61,17 +71,27 @@ export default function CreateItemModal({
   initialIcon = DEFAULT_ICON,
   initialSharedUids = [],
   noticeText = null,
+  mode = "create",
+  initialPendingUids = [],
+  onInviteParticipant,
+  onRemoveParticipant,
 }: CreateItemModalProps) {
+  const isEdit = mode === "edit";
+
   const [name, setName] = useState(initialName);
   const [price, setPrice] = useState(
     initialPrice !== undefined ? String(initialPrice) : "",
   );
   const [icon, setIcon] = useState<string | null>(initialIcon);
   const [quantity, setQuantity] = useState(initialQuantity);
+  // create: rascunho local, só vira consumerUids ao Salvar.
+  // edit: espelha quem já está aceito no item (mudanças já foram commitadas).
   const [sharedUids, setSharedUids] = useState<string[]>(initialSharedUids);
+  // edit: quem já foi convidado e aguarda aceite (nunca usado em create).
+  const [pendingUids, setPendingUids] = useState<string[]>(initialPendingUids);
   const [showList, setShowList] = useState(false);
   const [editingIcon, setEditingIcon] = useState(false);
-  // Estado de sharedUids ao abrir a lista, para o "Cancelar" reverter.
+  // Estado de sharedUids ao abrir a lista, para o "Cancelar" reverter (só create).
   const [listSnapshot, setListSnapshot] = useState<string[]>([]);
 
   function openList() {
@@ -80,7 +100,10 @@ export default function CreateItemModal({
   }
 
   function cancelList() {
-    setSharedUids(listSnapshot);
+    // Em edit, cada toque já foi commitado no Firestore — não há o que reverter.
+    if (!isEdit) {
+      setSharedUids(listSnapshot);
+    }
     setShowList(false);
   }
 
@@ -91,9 +114,23 @@ export default function CreateItemModal({
 
   // O dono (currentUid) entra sempre; os cards mostram só os demais.
   const others = participants.filter((p) => p.uid !== currentUid);
-  const selectedOthers = others.filter((p) => sharedUids.includes(p.uid));
+  const selectedOthers = others.filter(
+    (p) => sharedUids.includes(p.uid) || pendingUids.includes(p.uid),
+  );
 
   function toggle(uid: string) {
+    if (isEdit) {
+      if (sharedUids.includes(uid) || pendingUids.includes(uid)) {
+        setSharedUids((current) => current.filter((id) => id !== uid));
+        setPendingUids((current) => current.filter((id) => id !== uid));
+        onRemoveParticipant?.(uid);
+      } else {
+        setPendingUids((current) => [...current, uid]);
+        onInviteParticipant?.(uid);
+      }
+      return;
+    }
+
     setSharedUids((current) =>
       current.includes(uid)
         ? current.filter((id) => id !== uid)
@@ -238,10 +275,19 @@ export default function CreateItemModal({
                 >
                   {participant.displayName}
                 </span>
+                {isEdit && pendingUids.includes(participant.uid) ? (
+                  <span
+                    className="font-poppins rounded-full bg-[#fdf3df] px-2 text-center text-[#8a6d3b]"
+                    style={{ fontSize: "0.55rem", paddingBlock: "0.1rem" }}
+                  >
+                    Convite enviado
+                  </span>
+                ) : null}
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() => toggle(participant.uid)}
-                  className="font-poppins rounded-full bg-[#F1D4D3] px-3 font-semibold text-[#DA8280] transition hover:bg-[#e9c4c3]"
+                  className="font-poppins rounded-full bg-[#F1D4D3] px-3 font-semibold text-[#DA8280] transition hover:bg-[#e9c4c3] disabled:opacity-50"
                   style={{ fontSize: "0.6rem", paddingBlock: "0.15rem" }}
                 >
                   Excluir
@@ -484,7 +530,9 @@ export default function CreateItemModal({
                 style={{ gap: "var(--spacing-fluid-2)" }}
               >
                 {others.map((participant) => {
-                  const added = sharedUids.includes(participant.uid);
+                  const added =
+                    sharedUids.includes(participant.uid) ||
+                    pendingUids.includes(participant.uid);
                   return (
                     <li
                       key={participant.uid}
@@ -522,10 +570,11 @@ export default function CreateItemModal({
 
                       <button
                         type="button"
+                        disabled={saving}
                         onClick={() => toggle(participant.uid)}
                         aria-label={added ? "Remover" : "Adicionar"}
                         aria-pressed={added}
-                        className={`flex shrink-0 items-center justify-center rounded-full transition ${
+                        className={`flex shrink-0 items-center justify-center rounded-full transition disabled:opacity-50 ${
                           added
                             ? "bg-[#418964] text-white"
                             : "border border-[#418964] text-[#418964] hover:bg-[#cde9da]"

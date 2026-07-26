@@ -1,3 +1,20 @@
+export type ItemLastChangeType =
+  | "update"
+  | "invite"
+  | "accept"
+  | "decline"
+  | "leave"
+  | "remove";
+
+/** Último evento relevante do item — alimenta o aviso inline (sem central de notificações). */
+export type ItemLastChange = {
+  type: ItemLastChangeType;
+  byUid: string;
+  /** Relevante para "invite" (quem foi convidado) e "remove" (quem foi removido). */
+  targetUid?: string | null;
+  at: unknown;
+};
+
 export type TableItem = {
   name: string;
   /** Valor cheio do item (unitário × quantidade). Base do cálculo de divisão. */
@@ -7,58 +24,37 @@ export type TableItem = {
   /** Key do ícone de comida (ver lib/foodIcons). null = sem ícone. */
   icon: string | null;
   /**
-   * Participantes que dividem o item em partes iguais. Sempre inclui o dono
-   * (ownerUid): você só lança itens que você mesmo consome e, opcionalmente,
-   * compartilha com outros participantes.
+   * Participantes que já aceitaram dividir o item (fonte da verdade do
+   * rateio — lib/billing.ts só olha para este array). Sempre inclui quem
+   * criou o item.
    */
   consumerUids: string[];
+  /**
+   * Convidados aguardando aceitar ou recusar. Nunca entram no rateio
+   * enquanto estiverem aqui.
+   */
+  pendingInvites: string[];
+  /** Quem criou o item. Só histórico após a criação — sem privilégio especial. */
   ownerUid: string;
   createdAt: unknown;
   updatedAt: unknown;
-  /**
-   * Proposta de edição/exclusão ainda não confirmada por todos os outros
-   * consumidores do item. null = sem proposta ativa.
-   */
-  pendingChange: ItemPendingChange | null;
+  lastChange: ItemLastChange | null;
 };
 
 export type CreateTableItemInput = {
   name: string;
   price: number;
   quantity?: number;
+  /** Criador + convidados; o service separa quem entra aceito e quem entra pendente. */
   consumerUids: string[];
   icon?: string | null;
 };
 
-export type UpdateTableItemInput = {
+export type UpdateItemDetailsInput = {
   name: string;
   price: number;
   quantity?: number;
-  consumerUids: string[];
   icon?: string | null;
-};
-
-export type ItemChangeType = "update" | "delete";
-
-export type ItemProposedData = {
-  name: string;
-  price: number;
-  quantity: number;
-  icon: string | null;
-  consumerUids: string[];
-};
-
-export type ItemPendingChange = {
-  type: ItemChangeType;
-  /** Quem propôs a alteração. */
-  proposedBy: string;
-  /** Dados propostos; null quando type === "delete". */
-  proposedData: ItemProposedData | null;
-  /** consumerUids do item (no momento da proposta) menos o proponente. */
-  awaitingUids: string[];
-  /** Subconjunto de awaitingUids que já confirmou. */
-  confirmedUids: string[];
-  createdAt: unknown;
 };
 
 export type TableItemWithId = TableItem & {

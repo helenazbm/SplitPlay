@@ -30,6 +30,7 @@ function toBillItems(
       consumerUids = [ownerUid];
     }
 
+    // pendingInvites nunca entra no rateio — só quem já aceitou divide o item.
     return { price: Number(data.price ?? 0), consumerUids };
   });
 }
@@ -89,67 +90,53 @@ async function recomputeBill(tableId: string): Promise<void> {
 }
 
 /**
- * Se a proposta pendente de um item já tem todo mundo de `awaitingUids`
- * presente em `confirmedUids`, aplica a mudança (atualiza os campos, ou
- * exclui o item) e limpa `pendingChange`. Idempotente: se ainda faltar
- * alguém, ou não houver proposta pendente, não faz nada.
+ * Se um item ficou sem ninguém (nem consumidor aceito, nem convite
+ * pendente), apaga o doc e libera o id de `users/{ownerUid}.ownedItemIds`.
+ * Idempotente: se ainda houver alguém em qualquer um dos dois arrays, não
+ * faz nada. Retorna `true` se apagou.
  */
-async function maybeFinalizeItemChange(
+async function maybeDeleteEmptyItem(
   tableId: string,
   itemId: string,
-): Promise<void> {
+): Promise<boolean> {
   const itemRef = db.doc(`tables/${tableId}/items/${itemId}`);
 
-  await db.runTransaction(async (tx) => {
+  return db.runTransaction(async (tx) => {
     const snap = await tx.get(itemRef);
     if (!snap.exists) {
-      return;
+      return false;
     }
 
-    const pending = snap.get("pendingChange");
-    if (!pending) {
-      return;
+    const consumerUids: string[] = snap.get("consumerUids") ?? [];
+    const pendingInvites: string[] = snap.get("pendingInvites") ?? [];
+    if (consumerUids.length > 0 || pendingInvites.length > 0) {
+      return false;
     }
 
-    const awaiting: string[] = pending.awaitingUids ?? [];
-    const confirmed: string[] = pending.confirmedUids ?? [];
-    const stillWaiting = awaiting.filter((uid) => !confirmed.includes(uid));
-    if (stillWaiting.length > 0) {
-      return;
-    }
-
-    if (pending.type === "delete") {
-      tx.delete(itemRef);
-      const ownerUid = String(snap.get("ownerUid") ?? "");
-      if (ownerUid) {
-        tx.update(db.doc(`users/${ownerUid}`), {
-          ownedItemIds: FieldValue.arrayRemove(itemId),
-        });
-      }
-    } else {
-      const proposed = pending.proposedData ?? {};
-      tx.update(itemRef, {
-        name: proposed.name,
-        price: proposed.price,
-        quantity: proposed.quantity ?? 1,
-        icon: proposed.icon ?? null,
-        consumerUids: proposed.consumerUids,
-        pendingChange: null,
-        updatedAt: FieldValue.serverTimestamp(),
+    tx.delete(itemRef);
+    const ownerUid = String(snap.get("ownerUid") ?? "");
+    if (ownerUid) {
+      tx.update(db.doc(`users/${ownerUid}`), {
+        ownedItemIds: FieldValue.arrayRemove(itemId),
       });
     }
 
-    logger.info("Proposta de item finalizada", { tableId, itemId, type: pending.type });
+    logger.info("Item apagado (sem participantes)", { tableId, itemId });
+    return true;
   });
 }
 
-/** Item criado/editado/excluído → finaliza proposta (se completa) e recalcula a conta. */
+/** Item criado/editado → apaga se ficou vazio, senão recalcula a conta. */
 export const onItemWrite = onDocumentWritten(
   "tables/{tableId}/items/{itemId}",
   async (event) => {
     const after = event.data?.after;
-    if (after?.exists && after.get("pendingChange")) {
-      await maybeFinalizeItemChange(event.params.tableId, event.params.itemId);
+    if (after?.exists) {
+      const deleted = await maybeDeleteEmptyItem(event.params.tableId, event.params.itemId);
+      if (deleted) {
+        // A própria exclusão re-dispara este gatilho, que recalcula a conta.
+        return;
+      }
     }
 
     await recomputeBill(event.params.tableId);
@@ -223,40 +210,46 @@ async function maybeAutoCloseTable(tableId: string): Promise<void> {
 }
 
 /**
- * Participante saiu da mesa: para qualquer item com uma proposta pendente
- * onde ele ainda precisava confirmar, trata a saída como confirmação
- * implícita (evita deadlock — quem sai não pode mais ser bloqueante). Quem
- * dispara a aplicação de fato da mudança é o próprio `onItemWrite`, reagindo
- * à escrita em `confirmedUids` feita aqui.
+ * Participante saiu da mesa: remove o uid de `consumerUids`/`pendingInvites`
+ * de qualquer item onde ele estivesse (aceito ou convidado). Quem cuida da
+ * cascata de apagar itens que ficaram vazios é o próprio `onItemWrite`,
+ * reagindo a esta escrita.
  */
-async function resolveLeftParticipantProposals(
+async function removeParticipantFromItems(
   tableId: string,
   uid: string,
 ): Promise<void> {
   const itemsRef = db.collection(`tables/${tableId}/items`);
-  const snap = await itemsRef
-    .where("pendingChange.awaitingUids", "array-contains", uid)
-    .get();
+  const [consumerSnap, invitedSnap] = await Promise.all([
+    itemsRef.where("consumerUids", "array-contains", uid).get(),
+    itemsRef.where("pendingInvites", "array-contains", uid).get(),
+  ]);
 
-  if (snap.empty) {
+  if (consumerSnap.empty && invitedSnap.empty) {
     return;
   }
 
   const batch = db.batch();
+  const seen = new Set<string>();
   let count = 0;
-  snap.docs.forEach((docSnap) => {
-    const confirmed: string[] = docSnap.get("pendingChange.confirmedUids") ?? [];
-    if (!confirmed.includes(uid)) {
-      batch.update(docSnap.ref, {
-        "pendingChange.confirmedUids": FieldValue.arrayUnion(uid),
-      });
-      count += 1;
+
+  [...consumerSnap.docs, ...invitedSnap.docs].forEach((docSnap) => {
+    if (seen.has(docSnap.ref.path)) {
+      return;
     }
+    seen.add(docSnap.ref.path);
+
+    batch.update(docSnap.ref, {
+      consumerUids: FieldValue.arrayRemove(uid),
+      pendingInvites: FieldValue.arrayRemove(uid),
+      lastChange: { type: "leave", byUid: uid, targetUid: null, at: FieldValue.serverTimestamp() },
+    });
+    count += 1;
   });
 
   if (count > 0) {
     await batch.commit();
-    logger.info("Confirmação implícita por saída de participante", { tableId, uid, count });
+    logger.info("Participante removido de itens por sair da mesa", { tableId, uid, count });
   }
 }
 
@@ -273,11 +266,11 @@ export const onParticipantWrite = onDocumentWritten(
     const before = event.data?.before;
     const after = event.data?.after;
 
-    // Saída de participante: resolve propostas pendentes onde ele era
-    // bloqueante e, se os restantes já pagaram, pode encerrar a mesa.
+    // Saída de participante: remove-o dos itens em que estava e, se os
+    // restantes já pagaram, pode encerrar a mesa.
     if (!after?.exists) {
       if (before?.exists) {
-        await resolveLeftParticipantProposals(event.params.tableId, event.params.participantId);
+        await removeParticipantFromItems(event.params.tableId, event.params.participantId);
 
         if (before.get("paid") !== true) {
           await maybeAutoCloseTable(event.params.tableId);

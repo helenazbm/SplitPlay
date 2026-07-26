@@ -171,9 +171,9 @@ service cloud.firestore {
                       || isParticipant(tableId)
                     );
 
-        // Participante cria um item cujo dono é ele mesmo. consumerUids é a lista
-        // de quem divide o item e DEVE incluir o próprio dono: não é permitido
-        // lançar um item só para outra pessoa (compartilhar inclui você).
+        // Participante cria um item cujo dono é ele mesmo. Só o criador entra
+        // aceito (consumerUids); qualquer outro selecionado no modal entra em
+        // pendingInvites e só passa a dividir o item depois de aceitar.
         allow create: if isSignedIn()
                       && isParticipant(tableId)
                       && request.resource.data.ownerUid == request.auth.uid
@@ -181,87 +181,95 @@ service cloud.firestore {
                       && request.resource.data.name.size() > 0
                       && request.resource.data.price is number
                       && request.resource.data.price > 0
-                      && request.resource.data.consumerUids is list
-                      && request.resource.data.consumerUids.size() >= 1
-                      && request.auth.uid in request.resource.data.consumerUids
+                      && request.resource.data.consumerUids == [request.auth.uid]
+                      && request.resource.data.pendingInvites is list
+                      && !(request.auth.uid in request.resource.data.pendingInvites)
                       && (!('quantity' in request.resource.data)
                           || (request.resource.data.quantity is number
                               && request.resource.data.quantity >= 1))
                       && (!('icon' in request.resource.data)
                           || request.resource.data.icon == null
                           || request.resource.data.icon is string)
-                      && (!('pendingChange' in request.resource.data)
-                          || request.resource.data.pendingChange == null);
+                      && (!('lastChange' in request.resource.data)
+                          || request.resource.data.lastChange == null);
 
-        // (1) Edição direta — só item NÃO compartilhado (consumerUids.size() <= 1),
-        //     só o dono. Item compartilhado exige proposta + confirmação (blocos 2/3).
+        // (1) Editar nome/valor/quantidade/ícone — qualquer consumidor aceito,
+        //     vale na hora, sem aprovação de ninguém.
         allow update: if isSignedIn()
-                      && resource.data.ownerUid == request.auth.uid
-                      && resource.data.consumerUids.size() <= 1
-                      && request.resource.data.ownerUid == resource.data.ownerUid
-                      && request.resource.data.consumerUids is list
-                      && request.auth.uid in request.resource.data.consumerUids
-                      && request.resource.data.consumerUids.size() <= 1
-                      && request.resource.data.pendingChange == null
+                      && request.auth.uid in resource.data.consumerUids
+                      && onlyChanged(['name', 'price', 'quantity', 'icon', 'updatedAt', 'lastChange'])
+                      && request.resource.data.name is string
+                      && request.resource.data.name.size() > 0
+                      && request.resource.data.price is number
+                      && request.resource.data.price > 0
                       && (!('quantity' in request.resource.data)
                           || (request.resource.data.quantity is number
                               && request.resource.data.quantity >= 1))
                       && (!('icon' in request.resource.data)
                           || request.resource.data.icon == null
-                          || request.resource.data.icon is string);
+                          || request.resource.data.icon is string)
+                      && request.resource.data.lastChange.type == 'update'
+                      && request.resource.data.lastChange.byUid == request.auth.uid;
 
-        // (2) Propor alteração/exclusão — qualquer consumidor de um item
-        //     compartilhado pode propor, desde que não haja proposta ativa.
-        //     Só o campo pendingChange (e updatedAt) pode mudar.
+        // (2) Convidar um novo participante — qualquer consumidor aceito pode
+        //     propor; o alvo entra em pendingInvites, ainda não divide o item.
         allow update: if isSignedIn()
-                      && resource.data.consumerUids.size() > 1
                       && request.auth.uid in resource.data.consumerUids
-                      && resource.data.pendingChange == null
-                      && onlyChanged(['pendingChange', 'updatedAt'])
-                      && request.resource.data.pendingChange.proposedBy == request.auth.uid
-                      && request.resource.data.pendingChange.type in ['update', 'delete']
-                      && request.resource.data.pendingChange.confirmedUids == []
-                      && request.resource.data.pendingChange.awaitingUids
-                         == resource.data.consumerUids.removeAll([request.auth.uid])
-                      && (
-                           (request.resource.data.pendingChange.type == 'delete'
-                             && request.resource.data.pendingChange.proposedData == null)
-                           || (request.resource.data.pendingChange.type == 'update'
-                               && request.resource.data.pendingChange.proposedData.name is string
-                               && request.resource.data.pendingChange.proposedData.name.size() > 0
-                               && request.resource.data.pendingChange.proposedData.price is number
-                               && request.resource.data.pendingChange.proposedData.price > 0
-                               && request.resource.data.pendingChange.proposedData.consumerUids is list
-                               && request.resource.data.pendingChange.proposedData.consumerUids.size() >= 1
-                               && request.resource.data.ownerUid
-                                  in request.resource.data.pendingChange.proposedData.consumerUids)
-                         );
+                      && onlyChanged(['pendingInvites', 'updatedAt', 'lastChange'])
+                      && request.resource.data.lastChange.type == 'invite'
+                      && request.resource.data.lastChange.byUid == request.auth.uid
+                      && request.resource.data.lastChange.targetUid is string
+                      && !(request.resource.data.lastChange.targetUid in resource.data.consumerUids)
+                      && !(request.resource.data.lastChange.targetUid in resource.data.pendingInvites)
+                      && request.resource.data.pendingInvites
+                         == resource.data.pendingInvites.concat([request.resource.data.lastChange.targetUid]);
 
-        // (3) Responder a uma proposta ativa: confirmar (entra em confirmedUids)
-        //     ou recusar (pendingChange volta a null, cancelando a proposta). Só
-        //     quem está em awaitingUids e ainda não confirmou pode responder.
+        // (3) Responder a um convite — só o próprio convidado, sobre o
+        //     próprio uid: aceitar (entra em consumerUids) ou recusar.
         allow update: if isSignedIn()
-                      && resource.data.pendingChange != null
-                      && request.auth.uid in resource.data.pendingChange.awaitingUids
-                      && !(request.auth.uid in resource.data.pendingChange.confirmedUids)
-                      && onlyChanged(['pendingChange', 'updatedAt'])
+                      && request.auth.uid in resource.data.pendingInvites
+                      && onlyChanged(['consumerUids', 'pendingInvites', 'updatedAt', 'lastChange'])
+                      && request.resource.data.pendingInvites
+                         == resource.data.pendingInvites.removeAll([request.auth.uid])
+                      && request.resource.data.lastChange.byUid == request.auth.uid
                       && (
-                           (request.resource.data.pendingChange.confirmedUids
-                              == resource.data.pendingChange.confirmedUids.concat([request.auth.uid])
-                            && request.resource.data.pendingChange.awaitingUids
-                               == resource.data.pendingChange.awaitingUids
-                            && request.resource.data.pendingChange.type == resource.data.pendingChange.type
-                            && request.resource.data.pendingChange.proposedBy == resource.data.pendingChange.proposedBy
-                            && request.resource.data.pendingChange.proposedData == resource.data.pendingChange.proposedData)
-                           || request.resource.data.pendingChange == null
+                           (request.resource.data.lastChange.type == 'accept'
+                            && request.resource.data.consumerUids
+                               == resource.data.consumerUids.concat([request.auth.uid]))
+                           || (request.resource.data.lastChange.type == 'decline'
+                               && request.resource.data.consumerUids == resource.data.consumerUids)
                          );
 
-        // Exclusão direta — só item NÃO compartilhado, só o dono. Item
-        // compartilhado só é excluído via proposta + confirmação, finalizada
-        // pela Cloud Function (Admin SDK, ignora rules).
-        allow delete: if isSignedIn()
-                      && resource.data.ownerUid == request.auth.uid
-                      && resource.data.consumerUids.size() <= 1;
+        // (4) Autoexcluir-se — qualquer consumidor aceito, sobre o próprio
+        //     uid, sem aprovação de ninguém.
+        allow update: if isSignedIn()
+                      && request.auth.uid in resource.data.consumerUids
+                      && onlyChanged(['consumerUids', 'updatedAt', 'lastChange'])
+                      && request.resource.data.consumerUids
+                         == resource.data.consumerUids.removeAll([request.auth.uid])
+                      && request.resource.data.lastChange.type == 'leave'
+                      && request.resource.data.lastChange.byUid == request.auth.uid;
+
+        // (5) Remover outro participante (aceito ou convidado) — qualquer
+        //     consumidor aceito pode remover, sem aprovação de ninguém.
+        allow update: if isSignedIn()
+                      && request.auth.uid in resource.data.consumerUids
+                      && onlyChanged(['consumerUids', 'pendingInvites', 'updatedAt', 'lastChange'])
+                      && request.resource.data.lastChange.type == 'remove'
+                      && request.resource.data.lastChange.byUid == request.auth.uid
+                      && request.resource.data.lastChange.targetUid != request.auth.uid
+                      && (
+                           resource.data.consumerUids.hasAny([request.resource.data.lastChange.targetUid])
+                           || resource.data.pendingInvites.hasAny([request.resource.data.lastChange.targetUid])
+                         )
+                      && request.resource.data.consumerUids
+                         == resource.data.consumerUids.removeAll([request.resource.data.lastChange.targetUid])
+                      && request.resource.data.pendingInvites
+                         == resource.data.pendingInvites.removeAll([request.resource.data.lastChange.targetUid]);
+
+        // Sem allow delete: a exclusão do item (quando consumerUids e
+        // pendingInvites ficam ambos vazios) só acontece via Cloud Function
+        // (Admin SDK, ignora rules).
       }
     }
 

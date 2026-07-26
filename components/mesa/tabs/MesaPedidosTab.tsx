@@ -2,16 +2,17 @@
 
 import { useAuth } from "@/lib/contexts/AuthContext";
 import {
+  acceptItemInvite,
+  addItemParticipant,
   createTableItem,
-  deleteTableItem,
-  proposeItemDelete,
-  proposeItemUpdate,
-  respondToItemProposal,
+  declineItemInvite,
+  leaveItem,
+  removeItemParticipant,
   subscribeToTableItems,
   subscribeToTableParticipants,
-  updateTableItem,
+  updateItemDetails,
 } from "@/lib/services/itemService";
-import type { TableItemWithId } from "@/lib/types/item";
+import type { ItemLastChange, TableItemWithId } from "@/lib/types/item";
 import ComandaResumo from "@/components/mesa/ComandaResumo";
 import CreateItemModal from "@/components/mesa/CreateItemModal";
 import {
@@ -22,7 +23,7 @@ import {
 import { foodIconSrc } from "@/lib/foodIcons";
 import Avatar from "@/components/Avatar";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type MesaPedidosTabProps = {
   isCreateOpen: boolean;
@@ -38,10 +39,25 @@ type ParticipantOption = {
   avatarUrl?: string | null;
 };
 
+type Toast = {
+  id: string;
+  text: string;
+};
+
 const brl = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
 });
+
+/** Chave estável para um `lastChange`, usada tanto pra dedupe de toast quanto pra "dispensar" um banner. */
+function changeKey(itemId: string, lastChange: ItemLastChange | null): string {
+  const at = lastChange?.at;
+  const millis =
+    at && typeof at === "object" && "toMillis" in at && typeof (at as { toMillis: () => number }).toMillis === "function"
+      ? (at as { toMillis: () => number }).toMillis()
+      : String(at ?? "");
+  return `${itemId}:${millis}`;
+}
 
 export default function MesaPedidosTab({
   isCreateOpen,
@@ -59,6 +75,19 @@ export default function MesaPedidosTab({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const previousItemsRef = useRef<TableItemWithId[]>([]);
+  const toastSeenRef = useRef<Set<string>>(new Set());
+  // Espelham o estado mais recente para uso dentro do callback do listener
+  // de itens (que só é recriado quando `tableId` muda — ver efeito abaixo).
+  const userRef = useRef(user);
+  const participantByUidRef = useRef<Map<string, ParticipantOption>>(new Map());
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   useEffect(() => {
     // loading inicia em true; as subscriptions ajustam loading/error nos
@@ -66,6 +95,66 @@ export default function MesaPedidosTab({
     const stopItems = subscribeToTableItems(
       tableId,
       (nextItems) => {
+        // Aviso "fulano te removeu do item X": comparando com a rodada
+        // anterior, detecta quando o usuário deixou de estar em
+        // consumerUids/pendingInvites de um item por ação de outra pessoa
+        // (não por clique próprio) — gera um toast efêmero, já que não há
+        // central de notificações.
+        const currentUser = userRef.current;
+        if (currentUser) {
+          const previous = previousItemsRef.current;
+          const currentById = new Map(nextItems.map((item) => [item.id, item]));
+          const newToasts: Toast[] = [];
+
+          for (const prevItem of previous) {
+            const wasIn =
+              prevItem.consumerUids.includes(currentUser.uid) ||
+              prevItem.pendingInvites.includes(currentUser.uid);
+            if (!wasIn) {
+              continue;
+            }
+
+            const current = currentById.get(prevItem.id);
+            const isInNow = current
+              ? current.consumerUids.includes(currentUser.uid) ||
+                current.pendingInvites.includes(currentUser.uid)
+              : false;
+
+            if (isInNow) {
+              continue;
+            }
+
+            const lastChange = current?.lastChange ?? prevItem.lastChange;
+            if (!lastChange || lastChange.byUid === currentUser.uid) {
+              // Ação do próprio usuário (saiu/recusou) — não precisa de toast.
+              continue;
+            }
+
+            const key = changeKey(prevItem.id, lastChange);
+            if (toastSeenRef.current.has(key)) {
+              continue;
+            }
+            toastSeenRef.current.add(key);
+
+            const byName =
+              participantByUidRef.current.get(lastChange.byUid)?.displayName ?? "Alguém";
+            const toastId = `${key}-${Date.now()}`;
+            newToasts.push({
+              id: toastId,
+              text: `${byName} removeu você do item "${prevItem.name}".`,
+            });
+
+            setTimeout(() => {
+              setToasts((current) => current.filter((toast) => toast.id !== toastId));
+            }, 8000);
+          }
+
+          if (newToasts.length > 0) {
+            setToasts((current) => [...current, ...newToasts]);
+          }
+        }
+
+        previousItemsRef.current = nextItems;
         setItems(nextItems);
         setLoading(false);
         setError(null);
@@ -112,9 +201,19 @@ export default function MesaPedidosTab({
     return map;
   }, [participantOptions]);
 
-  // A aba mostra apenas os itens que o usuário logado consome (sozinho ou compartilhado).
-  const myItems = useMemo(
+  useEffect(() => {
+    participantByUidRef.current = participantByUid;
+  }, [participantByUid]);
+
+  // Itens que o usuário já aceitou de fato (alimentam o rateio e o total).
+  const acceptedItems = useMemo(
     () => items.filter((item) => user && item.consumerUids.includes(user.uid)),
+    [items, user],
+  );
+
+  // Itens onde o usuário foi convidado e ainda não respondeu.
+  const invitedItems = useMemo(
+    () => items.filter((item) => user && item.pendingInvites.includes(user.uid)),
     [items, user],
   );
 
@@ -124,12 +223,12 @@ export default function MesaPedidosTab({
   // Item em edição (abre o modal pré-preenchido).
   const editingItem = items.find((it) => it.id === editingItemId) ?? null;
 
-  // Total (sua parte) calculado em centavos + maior resto: itens que você
-  // divide + couvert artístico. Evita erro de arredondamento do ponto flutuante.
+  // Total (sua parte) calculado em centavos + maior resto: itens já aceitos
+  // + couvert artístico. Evita erro de arredondamento do ponto flutuante.
   const total = useMemo(
     () =>
-      user ? centsToReais(userSubtotalCents(user.uid, myItems, couvert)) : 0,
-    [myItems, couvert, user],
+      user ? centsToReais(userSubtotalCents(user.uid, acceptedItems, couvert)) : 0,
+    [acceptedItems, couvert, user],
   );
 
   async function handleCreateItem(data: {
@@ -161,10 +260,6 @@ export default function MesaPedidosTab({
   }
 
   function beginEdit(item: TableItemWithId) {
-    const canPropose = item.ownerUid === user?.uid || item.consumerUids.length > 1;
-    if (!canPropose) {
-      return;
-    }
     setEditingItemId(item.id);
   }
 
@@ -172,15 +267,9 @@ export default function MesaPedidosTab({
     name: string;
     price: number;
     quantity: number;
-    consumerUids: string[];
     icon: string | null;
   }) {
-    if (!editingItemId || !user) {
-      return;
-    }
-
-    const target = items.find((it) => it.id === editingItemId);
-    if (!target) {
+    if (!editingItemId) {
       return;
     }
 
@@ -188,11 +277,12 @@ export default function MesaPedidosTab({
     setError(null);
 
     try {
-      if (target.consumerUids.length > 1) {
-        await proposeItemUpdate(tableId, editingItemId, data);
-      } else {
-        await updateTableItem(tableId, editingItemId, data);
-      }
+      await updateItemDetails(tableId, editingItemId, {
+        name: data.name,
+        price: data.price,
+        quantity: data.quantity,
+        icon: data.icon,
+      });
       setEditingItemId(null);
     } catch (nextError) {
       setError(
@@ -205,49 +295,115 @@ export default function MesaPedidosTab({
     }
   }
 
-  async function handleDelete(itemId: string) {
-    const target = items.find((it) => it.id === itemId);
-    if (!target) {
-      return;
-    }
-
+  async function handleInviteParticipant(itemId: string, targetUid: string) {
     setSaving(true);
     setError(null);
 
     try {
-      if (target.consumerUids.length > 1) {
-        await proposeItemDelete(tableId, itemId);
-      } else {
-        await deleteTableItem(tableId, itemId);
-        if (editingItemId === itemId) {
-          setEditingItemId(null);
-        }
-      }
+      await addItemParticipant(tableId, itemId, targetUid);
     } catch (nextError) {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Não foi possível excluir o item.",
+          : "Não foi possível convidar o participante.",
       );
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleRespond(itemId: string, accept: boolean) {
+  async function handleRemoveParticipant(itemId: string, targetUid: string) {
     setSaving(true);
     setError(null);
 
     try {
-      await respondToItemProposal(tableId, itemId, accept);
+      await removeItemParticipant(tableId, itemId, targetUid);
     } catch (nextError) {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Não foi possível responder à proposta.",
+          : "Não foi possível remover o participante.",
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleLeave(itemId: string) {
+    setSaving(true);
+    setError(null);
+
+    try {
+      await leaveItem(tableId, itemId);
+      if (editingItemId === itemId) {
+        setEditingItemId(null);
+      }
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível sair do item.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleInviteResponse(itemId: string, accept: boolean) {
+    setSaving(true);
+    setError(null);
+
+    try {
+      if (accept) {
+        await acceptItemInvite(tableId, itemId);
+      } else {
+        await declineItemInvite(tableId, itemId);
+      }
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível responder ao convite.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function dismissBanner(itemId: string, lastChange: ItemLastChange | null) {
+    setDismissedKeys((current) => {
+      const next = new Set(current);
+      next.add(changeKey(itemId, lastChange));
+      return next;
+    });
+  }
+
+  function lastChangeBanner(item: TableItemWithId): string | null {
+    const lc = item.lastChange;
+    if (!user || !lc || lc.byUid === user.uid) {
+      return null;
+    }
+    if (dismissedKeys.has(changeKey(item.id, lc))) {
+      return null;
+    }
+
+    const byName = participantByUid.get(lc.byUid)?.displayName ?? "Alguém";
+    const perPerson = brl.format(
+      centsToReais(userItemShareCents(user.uid, item)),
+    );
+
+    switch (lc.type) {
+      case "update":
+        return `${byName} alterou o item. Novo valor: ${perPerson} por pessoa.`;
+      case "remove": {
+        const targetName =
+          participantByUid.get(lc.targetUid ?? "")?.displayName ?? "um participante";
+        return `${byName} removeu ${targetName} do item. Valor atualizado: ${perPerson} por pessoa.`;
+      }
+      case "leave":
+        return `${byName} saiu do item. Valor atualizado: ${perPerson} por pessoa.`;
+      default:
+        return null;
     }
   }
 
@@ -258,7 +414,25 @@ export default function MesaPedidosTab({
       aria-label="Pedidos"
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
-      <ComandaResumo itemCount={myItems.length} totalReais={total} />
+      {toasts.length > 0 ? (
+        <div
+          className="flex flex-col"
+          style={{ gap: "var(--spacing-fluid-2)" }}
+          aria-live="polite"
+        >
+          {toasts.map((toast) => (
+            <p
+              key={toast.id}
+              className="font-poppins rounded-[10px_10px_25px_10px] border border-[#fdebd0] bg-[#fff7e7] px-4 py-3 text-[#8a6d3b]"
+              style={{ fontSize: "var(--text-fluid-xs)" }}
+            >
+              {toast.text}
+            </p>
+          ))}
+        </div>
+      ) : null}
+
+      <ComandaResumo itemCount={acceptedItems.length} totalReais={total} />
 
       <div
         className="flex items-center justify-between"
@@ -306,18 +480,96 @@ export default function MesaPedidosTab({
         </p>
       ) : null}
 
+      {invitedItems.length > 0 ? (
+        <div className="flex flex-col" style={{ gap: "var(--spacing-fluid-2)" }}>
+          <h3
+            className="font-poppins font-black text-[#e5786c]"
+            style={{ fontSize: "var(--text-fluid-sm)" }}
+          >
+            Convites pendentes
+          </h3>
+
+          {invitedItems.map((item) => (
+            <article
+              key={item.id}
+              className="w-full border"
+              style={{
+                borderColor: "#5F9C7D",
+                borderWidth: "0.1px",
+                borderRadius: "8px",
+                backgroundColor: "#FBFAF7",
+                padding: "var(--spacing-fluid-3)",
+              }}
+            >
+              <div
+                className="flex items-center justify-between"
+                style={{ gap: "var(--spacing-fluid-2)" }}
+              >
+                <div className="min-w-0">
+                  <h4
+                    className="font-poppins truncate font-semibold text-[#418964]"
+                    style={{ fontSize: "var(--text-fluid-sm)" }}
+                  >
+                    {item.name}
+                  </h4>
+                  <p
+                    className="font-poppins text-[#9bb0a4]"
+                    style={{ fontSize: "var(--text-fluid-xs)" }}
+                  >
+                    Convidado por{" "}
+                    {participantByUid.get(item.ownerUid)?.displayName ?? "alguém"} ·{" "}
+                    {brl.format(
+                      centsToReais(
+                        userItemShareCents(user?.uid ?? "", {
+                          price: item.price,
+                          consumerUids: [...item.consumerUids, user?.uid ?? ""],
+                        }),
+                      ),
+                    )}{" "}
+                    por pessoa (estimativa)
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 items-center" style={{ gap: "var(--spacing-fluid-2)" }}>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void handleInviteResponse(item.id, false)}
+                    className="font-poppins flex items-center justify-center rounded-full bg-[#F1D4D3] font-semibold text-[#DA8280] transition hover:bg-[#e9c4c3] disabled:opacity-50"
+                    style={{
+                      height: "1.75rem",
+                      paddingInline: "var(--spacing-fluid-3)",
+                      fontSize: "var(--text-fluid-xs)",
+                    }}
+                  >
+                    Recusar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void handleInviteResponse(item.id, true)}
+                    className="font-poppins flex items-center justify-center rounded-full bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] disabled:opacity-50"
+                    style={{
+                      height: "1.75rem",
+                      paddingInline: "var(--spacing-fluid-3)",
+                      fontSize: "var(--text-fluid-xs)",
+                    }}
+                  >
+                    Aceitar
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
+
       <div className="flex flex-col" style={{ gap: "var(--spacing-fluid-2)" }}>
-        {myItems.map((item) => {
-          const isOwner = item.ownerUid === user?.uid;
-          const isShared = item.consumerUids.length > 1;
-          const canPropose = isOwner || isShared;
-          const pending = item.pendingChange;
-          const stillWaitingUids = pending
-            ? pending.awaitingUids.filter((uid) => !pending.confirmedUids.includes(uid))
-            : [];
-          const needsMyResponse = !!(
-            pending && user && stillWaitingUids.includes(user.uid)
-          );
+        {acceptedItems.map((item) => {
+          const isShared = item.consumerUids.length > 1 || item.pendingInvites.length > 0;
+          const canDeleteOutright =
+            item.consumerUids.length === 1 && item.pendingInvites.length === 0;
+          const banner = lastChangeBanner(item);
 
           return (
             <article
@@ -386,164 +638,125 @@ export default function MesaPedidosTab({
                 </strong>
               </div>
 
-              {isShared || isOwner ? (
+              <div
+                className="flex items-center justify-between"
+                style={{
+                  marginTop: "var(--spacing-fluid-3)",
+                  paddingTop: "var(--spacing-fluid-2)",
+                  gap: "var(--spacing-fluid-2)",
+                  // linha ocupando toda a largura do card (anula o padding lateral)
+                  marginInline: "calc(-1 * var(--spacing-fluid-3))",
+                  paddingInline: "var(--spacing-fluid-3)",
+                  borderTop: "0.1px solid #5F9C7D",
+                }}
+              >
+                {isShared ? (
+                  <div
+                    className="flex min-w-0 items-center"
+                    style={{ gap: "var(--spacing-fluid-2)" }}
+                  >
+                    <div className="flex -space-x-2">
+                      {item.consumerUids.slice(0, 3).map((uid) => {
+                        const p = participantByUid.get(uid);
+                        return (
+                          <Avatar
+                            key={uid}
+                            name={
+                              uid === user?.uid
+                                ? (p?.displayName ?? "Você")
+                                : (p?.displayName ?? "?")
+                            }
+                            avatarUrl={p?.avatarUrl}
+                            className="border-2 border-white"
+                            style={{ height: "1.5rem", width: "1.5rem" }}
+                            textStyle={{ fontSize: "0.55rem" }}
+                          />
+                        );
+                      })}
+                    </div>
+                    <span
+                      className="font-poppins truncate text-[#64835b]"
+                      style={{ fontSize: "var(--text-fluid-xs)" }}
+                    >
+                      {item.consumerUids.length}{" "}
+                      {item.consumerUids.length === 1 ? "participante" : "participantes"}
+                      {item.pendingInvites.length > 0
+                        ? ` · ${item.pendingInvites.length} convite(s) pendente(s)`
+                        : ""}
+                    </span>
+                  </div>
+                ) : (
+                  <span
+                    className="font-poppins text-[#9bb0a4]"
+                    style={{ fontSize: "var(--text-fluid-xs)" }}
+                  >
+
+                  </span>
+                )}
+
+                <div
+                  className="flex shrink-0 items-stretch overflow-hidden rounded-full border border-[#5F9C7D]"
+                  style={{ width: "60px", height: "20px" }}
+                >
+                  <button
+                    type="button"
+                    aria-label={canDeleteOutright ? "Excluir item" : "Sair do item"}
+                    title={canDeleteOutright ? "Excluir item" : "Sair do item"}
+                    disabled={saving}
+                    onClick={() => void handleLeave(item.id)}
+                    className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                  >
+                    <i
+                      aria-hidden="true"
+                      className="pi pi-trash"
+                      style={{ fontSize: "0.7rem" }}
+                    />
+                  </button>
+                  <span
+                    aria-hidden="true"
+                    className="w-px self-stretch bg-[#5F9C7D]/70"
+                  />
+                  <button
+                    type="button"
+                    aria-label="Editar item"
+                    disabled={saving}
+                    onClick={() => beginEdit(item)}
+                    className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                  >
+                    <i
+                      aria-hidden="true"
+                      className="pi pi-pencil"
+                      style={{ fontSize: "0.7rem" }}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {banner ? (
                 <div
                   className="flex items-center justify-between"
                   style={{
-                    marginTop: "var(--spacing-fluid-3)",
-                    paddingTop: "var(--spacing-fluid-2)",
+                    marginTop: "var(--spacing-fluid-2)",
                     gap: "var(--spacing-fluid-2)",
-                    // linha ocupando toda a largura do card (anula o padding lateral)
-                    marginInline: "calc(-1 * var(--spacing-fluid-3))",
-                    paddingInline: "var(--spacing-fluid-3)",
-                    borderTop: "0.1px solid #5F9C7D",
                   }}
                 >
-                  {pending ? (
-                    <div
-                      className="flex w-full flex-col"
-                      style={{ gap: "var(--spacing-fluid-2)" }}
-                    >
-                      <span
-                        className="font-poppins text-[#8a6d3b]"
-                        style={{ fontSize: "var(--text-fluid-xs)" }}
-                      >
-                        {pending.type === "delete"
-                          ? "Proposta: excluir este item."
-                          : `Proposta: ${pending.proposedData?.name ?? ""} · ${brl.format(
-                              pending.proposedData?.price ?? 0,
-                            )} · ${pending.proposedData?.quantity ?? 1}x`}
-                      </span>
-
-                      {needsMyResponse ? (
-                        <div
-                          className="flex items-center"
-                          style={{ gap: "var(--spacing-fluid-2)" }}
-                        >
-                          <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void handleRespond(item.id, false)}
-                            className="font-poppins flex items-center justify-center rounded-full bg-[#F1D4D3] font-semibold text-[#DA8280] transition hover:bg-[#e9c4c3] disabled:opacity-50"
-                            style={{
-                              height: "1.75rem",
-                              paddingInline: "var(--spacing-fluid-3)",
-                              fontSize: "var(--text-fluid-xs)",
-                            }}
-                          >
-                            Recusar
-                          </button>
-                          <button
-                            type="button"
-                            disabled={saving}
-                            onClick={() => void handleRespond(item.id, true)}
-                            className="font-poppins flex items-center justify-center rounded-full bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] disabled:opacity-50"
-                            style={{
-                              height: "1.75rem",
-                              paddingInline: "var(--spacing-fluid-3)",
-                              fontSize: "var(--text-fluid-xs)",
-                            }}
-                          >
-                            Confirmar
-                          </button>
-                        </div>
-                      ) : (
-                        <span
-                          className="font-poppins text-[#9bb0a4]"
-                          style={{ fontSize: "var(--text-fluid-xs)" }}
-                        >
-                          Aguardando confirmação de{" "}
-                          {stillWaitingUids
-                            .map((uid) => participantByUid.get(uid)?.displayName ?? "alguém")
-                            .join(", ")}
-                          .
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      {isShared ? (
-                        <div
-                          className="flex min-w-0 items-center"
-                          style={{ gap: "var(--spacing-fluid-2)" }}
-                        >
-                          <div className="flex -space-x-2">
-                            {item.consumerUids.slice(0, 3).map((uid) => {
-                              const p = participantByUid.get(uid);
-                              return (
-                                <Avatar
-                                  key={uid}
-                                  name={
-                                    uid === user?.uid
-                                      ? (p?.displayName ?? "Você")
-                                      : (p?.displayName ?? "?")
-                                  }
-                                  avatarUrl={p?.avatarUrl}
-                                  className="border-2 border-white"
-                                  style={{ height: "1.5rem", width: "1.5rem" }}
-                                  textStyle={{ fontSize: "0.55rem" }}
-                                />
-                              );
-                            })}
-                          </div>
-                          <span
-                            className="font-poppins truncate text-[#64835b]"
-                            style={{ fontSize: "var(--text-fluid-xs)" }}
-                          >
-                            {item.consumerUids.length} participantes
-                          </span>
-                        </div>
-                      ) : (
-                        <span
-                          className="font-poppins text-[#9bb0a4]"
-                          style={{ fontSize: "var(--text-fluid-xs)" }}
-                        >
-
-                        </span>
-                      )}
-
-                      {canPropose ? (
-                        <div
-                          className="flex shrink-0 items-stretch overflow-hidden rounded-full border border-[#5F9C7D]"
-                          style={{ width: "60px", height: "20px" }}
-                        >
-                          <button
-                            type="button"
-                            aria-label="Excluir item"
-                            disabled={saving}
-                            onClick={() => void handleDelete(item.id)}
-                            className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
-                          >
-                            <i
-                              aria-hidden="true"
-                              className="pi pi-trash"
-                              style={{ fontSize: "0.7rem" }}
-                            />
-                          </button>
-                          <span
-                            aria-hidden="true"
-                            className="w-px self-stretch bg-[#5F9C7D]/70"
-                          />
-                          <button
-                            type="button"
-                            aria-label="Editar item"
-                            disabled={saving}
-                            onClick={() => beginEdit(item)}
-                            className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
-                          >
-                            <i
-                              aria-hidden="true"
-                              className="pi pi-pencil"
-                              style={{ fontSize: "0.7rem" }}
-                            />
-                          </button>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
+                  <p
+                    className="font-poppins text-[#8a6d3b]"
+                    style={{ fontSize: "var(--text-fluid-xs)" }}
+                  >
+                    {banner}
+                  </p>
+                  <button
+                    type="button"
+                    aria-label="Dispensar aviso"
+                    onClick={() => dismissBanner(item.id, item.lastChange)}
+                    className="font-poppins shrink-0 text-[#8a6d3b] transition hover:opacity-70"
+                    style={{ fontSize: "var(--text-fluid-xs)" }}
+                  >
+                    <i aria-hidden="true" className="pi pi-times" />
+                  </button>
                 </div>
               ) : null}
-
             </article>
           );
         })}
@@ -592,7 +805,7 @@ export default function MesaPedidosTab({
           </article>
         ) : null}
 
-        {!loading && myItems.length === 0 && !hasCouvert ? (
+        {!loading && acceptedItems.length === 0 && invitedItems.length === 0 && !hasCouvert ? (
           <div className="rounded-[10px_10px_25px_10px] border border-dashed border-[#418964]/25 bg-white p-6 text-center">
             <p
               className="font-poppins text-[#64835b]"
@@ -617,21 +830,18 @@ export default function MesaPedidosTab({
 
       {editingItem ? (
         <CreateItemModal
+          mode="edit"
           participants={participantOptions}
           currentUid={user?.uid ?? ""}
           saving={saving}
           error={error}
           onClose={() => setEditingItemId(null)}
           onSubmit={handleUpdateItem}
+          onInviteParticipant={(uid) => void handleInviteParticipant(editingItem.id, uid)}
+          onRemoveParticipant={(uid) => void handleRemoveParticipant(editingItem.id, uid)}
           title="Editar Item"
-          submitLabel={
-            editingItem.consumerUids.length > 1 ? "Propor alteração" : "Salvar"
-          }
-          noticeText={
-            editingItem.consumerUids.length > 1
-              ? "Este item é compartilhado: sua edição vira uma proposta e só valerá depois que todos os outros confirmarem."
-              : null
-          }
+          submitLabel="Salvar"
+          noticeText="Convidar ou remover participantes vale na hora. Nome e valor só mudam ao Salvar."
           initialName={editingItem.name}
           initialPrice={
             editingItem.quantity > 0
@@ -643,6 +853,7 @@ export default function MesaPedidosTab({
           initialSharedUids={editingItem.consumerUids.filter(
             (uid) => uid !== user?.uid,
           )}
+          initialPendingUids={editingItem.pendingInvites}
         />
       ) : null}
     </div>

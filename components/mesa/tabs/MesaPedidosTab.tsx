@@ -4,15 +4,15 @@ import { useAuth } from "@/lib/contexts/AuthContext";
 import {
   createTableItem,
   deleteTableItem,
-  subscribeToTableItems,
-  subscribeToTableParticipants,
   updateTableItem,
 } from "@/lib/services/itemService";
 import type { TableItemWithId } from "@/lib/types/item";
+import type { Participant } from "@/lib/types/participant";
 import ComandaResumo from "@/components/mesa/ComandaResumo";
 import CreateItemModal from "@/components/mesa/CreateItemModal";
 import {
   centsToReais,
+  isItemInCurrentRound,
   userItemShareCents,
   userSubtotalCents,
 } from "@/lib/billing";
@@ -25,14 +25,21 @@ type MesaPedidosTabProps = {
   isCreateOpen: boolean;
   onOpenCreate: () => void;
   onCloseCreate: () => void;
-  /** Couvert artístico (por pessoa) definido pelo admin. Entra como item fixo. */
   couvert?: number;
+  items: TableItemWithId[];
+  participants: Participant[];
+  loadError?: string | null;
 };
 
 type ParticipantOption = {
   uid: string;
   displayName: string;
   avatarUrl?: string | null;
+  paid?: boolean;
+  left?: boolean;
+  settledThroughAt?: Date | null;
+  couvertSettled?: boolean;
+  paidTotalCents?: number;
 };
 
 const brl = new Intl.NumberFormat("pt-BR", {
@@ -45,61 +52,43 @@ export default function MesaPedidosTab({
   onOpenCreate,
   onCloseCreate,
   couvert = 0,
+  items,
+  participants,
+  loadError = null,
 }: MesaPedidosTabProps) {
   const params = useParams<{ tableId: string }>();
   const tableId = params.tableId;
   const { user } = useAuth();
 
-  const [items, setItems] = useState<TableItemWithId[]>([]);
-  const [participants, setParticipants] = useState<ParticipantOption[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
-  useEffect(() => {
-    // loading inicia em true; as subscriptions ajustam loading/error nos
-    // callbacks (evita setState síncrono no corpo do effect — cascading renders).
-    const stopItems = subscribeToTableItems(
-      tableId,
-      (nextItems) => {
-        setItems(nextItems);
-        setLoading(false);
-        setError(null);
-      },
-      (nextError) => {
-        setError(nextError.message);
-        setLoading(false);
-      },
-    );
+  const participantOptions = useMemo<ParticipantOption[]>(() => {
+    if (participants.length > 0) {
+      return participants.map((participant) => ({
+        uid: participant.uid,
+        displayName: participant.displayName,
+        avatarUrl: participant.avatarUrl ?? null,
+        paid: participant.paid,
+        left: participant.left,
+        settledThroughAt: participant.settledThroughAt,
+        couvertSettled: participant.couvertSettled,
+        paidTotalCents: participant.paidTotalCents,
+      }));
+    }
 
-    const stopParticipants = subscribeToTableParticipants(
-      tableId,
-      setParticipants,
-      (nextError) => setError(nextError.message),
-    );
-
-    return () => {
-      stopItems();
-      stopParticipants();
-    };
-  }, [tableId]);
-
-  const participantOptions = useMemo(
-    () =>
-      participants.length > 0
-        ? participants
-        : user
-          ? [
-              {
-                uid: user.uid,
-                displayName: user.displayName ?? "Você",
-                avatarUrl: user.photoURL ?? null,
-              },
-            ]
-          : [],
-    [participants, user],
-  );
+    return user
+      ? [
+          {
+            uid: user.uid,
+            displayName: user.displayName ?? "Você",
+            avatarUrl: user.photoURL ?? null,
+            paid: false,
+          },
+        ]
+      : [];
+  }, [participants, user]);
 
   const participantByUid = useMemo(() => {
     const map = new Map<string, ParticipantOption>();
@@ -109,24 +98,68 @@ export default function MesaPedidosTab({
     return map;
   }, [participantOptions]);
 
+  const shareableParticipants = useMemo(
+    () =>
+      participantOptions.filter(
+        (participant) => !participant.paid && !participant.left,
+      ),
+    [participantOptions],
+  );
+
+  const currentParticipant = useMemo(
+    () => participantOptions.find((participant) => participant.uid === user?.uid) ?? null,
+    [participantOptions, user?.uid],
+  );
+
+  const currentParticipantPaid = currentParticipant?.paid === true;
+  const participantStatusResolved = user ? currentParticipant !== null : false;
+  const disableAddItem = !participantStatusResolved || saving;
+
   // A aba mostra apenas os itens que o usuário logado consome (sozinho ou compartilhado).
   const myItems = useMemo(
     () => items.filter((item) => user && item.consumerUids.includes(user.uid)),
     [items, user],
   );
 
-  // Couvert artístico é cobrado por pessoa: entra na conta de todos.
-  const hasCouvert = couvert > 0;
+  const settledThroughMs =
+    currentParticipant?.settledThroughAt?.getTime() ?? null;
+
+  const isPaidByMe = useMemo(
+    () => (item: TableItemWithId) =>
+      !isItemInCurrentRound(
+        {
+          price: item.price,
+          consumerUids: item.consumerUids,
+          createdAtMs: item.createdAtMs,
+        },
+        settledThroughMs,
+      ),
+    [settledThroughMs],
+  );
+
+  const currentRoundItems = useMemo(
+    () => myItems.filter((item) => !isPaidByMe(item)),
+    [myItems, isPaidByMe],
+  );
+
+  const hasCouvert = couvert > 0 && currentParticipant?.couvertSettled !== true;
 
   // Item em edição (abre o modal pré-preenchido).
   const editingItem = items.find((it) => it.id === editingItemId) ?? null;
 
   // Total (sua parte) calculado em centavos + maior resto: itens que você
   // divide + couvert artístico. Evita erro de arredondamento do ponto flutuante.
+  // Só a rodada ATUAL — o que já foi pago não volta para o total a pagar.
   const total = useMemo(
     () =>
-      user ? centsToReais(userSubtotalCents(user.uid, myItems, couvert)) : 0,
-    [myItems, couvert, user],
+      user
+        ? centsToReais(
+            userSubtotalCents(user.uid, currentRoundItems, couvert, {
+              couvertSettled: currentParticipant?.couvertSettled === true,
+            }),
+          )
+        : 0,
+    [currentRoundItems, couvert, user, currentParticipant?.couvertSettled],
   );
 
   async function handleCreateItem(data: {
@@ -137,6 +170,13 @@ export default function MesaPedidosTab({
     icon: string | null;
   }) {
     if (!user) {
+      return;
+    }
+
+    if (currentParticipantPaid) {
+      setError(
+        "Sua conta já foi paga. Para consumir mais, saia da mesa e entre novamente.",
+      );
       return;
     }
 
@@ -155,6 +195,22 @@ export default function MesaPedidosTab({
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleOpenCreate() {
+    if (currentParticipantPaid) {
+      setError(
+        "Sua conta já foi paga. Para consumir mais, saia da mesa e entre novamente.",
+      );
+      return;
+    }
+
+    if (!participantStatusResolved) {
+      setError("Aguarde um instante enquanto validamos seu status de pagamento.");
+      return;
+    }
+
+    onOpenCreate();
   }
 
   function beginEdit(item: TableItemWithId) {
@@ -219,7 +275,11 @@ export default function MesaPedidosTab({
       aria-label="Pedidos"
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
-      <ComandaResumo itemCount={myItems.length} totalReais={total} />
+      <ComandaResumo
+        itemCount={currentRoundItems.length}
+        totalReais={total}
+        paidReais={centsToReais(currentParticipant?.paidTotalCents ?? 0)}
+      />
 
       <div
         className="flex items-center justify-between"
@@ -234,9 +294,10 @@ export default function MesaPedidosTab({
 
         <button
           type="button"
-          onClick={onOpenCreate}
+          onClick={handleOpenCreate}
           aria-label="Adicionar item"
-          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95"
+          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95 disabled:cursor-not-allowed disabled:bg-[#d8dfda] disabled:text-[#8a9a90] disabled:active:scale-100"
+          disabled={disableAddItem}
           style={{
             height: "2rem",
             paddingInline: "var(--spacing-fluid-3)",
@@ -249,28 +310,20 @@ export default function MesaPedidosTab({
         </button>
       </div>
 
-      {error ? (
+      {error ?? loadError ? (
         <p
           className="font-poppins rounded-[10px_10px_25px_10px] border border-[#fdebd0] bg-[#fff7e7] px-4 py-3 text-[#8a6d3b]"
           style={{ fontSize: "var(--text-fluid-xs)" }}
         >
-          {error}
-        </p>
-      ) : null}
-
-      {loading ? (
-        <p
-          className="font-poppins text-[#64835b]"
-          style={{ fontSize: "var(--text-fluid-xs)" }}
-        >
-          Carregando itens...
+          {error ?? loadError}
         </p>
       ) : null}
 
       <div className="flex flex-col" style={{ gap: "var(--spacing-fluid-2)" }}>
         {myItems.map((item) => {
-          const isOwner = item.ownerUid === user?.uid;
+          const isOwner = item.ownerUid === user?.uid && !item.settled;
           const isShared = item.consumerUids.length > 1;
+          const paidByMe = isPaidByMe(item);
 
           return (
             <article
@@ -281,7 +334,7 @@ export default function MesaPedidosTab({
                 borderColor: "#5F9C7D",
                 borderWidth: "0.1px",
                 borderRadius: "8px",
-                backgroundColor: "#FBFAF7",
+                backgroundColor: paidByMe ? "#F3F6F3" : "#FBFAF7",
                 padding: "var(--spacing-fluid-3)",
               }}
             >
@@ -311,12 +364,30 @@ export default function MesaPedidosTab({
                 </span>
 
                 <div className="min-w-0 flex-1">
-                  <h3
-                    className="font-poppins truncate font-semibold text-[#418964]"
-                    style={{ fontSize: "var(--text-fluid-sm)" }}
+                  <div
+                    className="flex min-w-0 items-center"
+                    style={{ gap: "var(--spacing-fluid-2)" }}
                   >
-                    {item.name}
-                  </h3>
+                    <h3
+                      className="font-poppins truncate font-semibold text-[#418964]"
+                      style={{ fontSize: "var(--text-fluid-sm)" }}
+                    >
+                      {item.name}
+                    </h3>
+
+                    {paidByMe ? (
+                      <span
+                        className="font-poppins shrink-0 rounded-full bg-[#CDE9DA] font-semibold text-[#5B9A7A]"
+                        style={{
+                          fontSize: "var(--text-fluid-xs)",
+                          paddingInline: "0.5rem",
+                          paddingBlock: "0.1rem",
+                        }}
+                      >
+                        Pago
+                      </span>
+                    ) : null}
+                  </div>
                   <p
                     className="font-poppins text-[#9bb0a4]"
                     style={{
@@ -339,7 +410,7 @@ export default function MesaPedidosTab({
                 </strong>
               </div>
 
-              {isShared || isOwner ? (
+              {isShared || isOwner || paidByMe ? (
                 <div
                   className="flex items-center justify-between"
                   style={{
@@ -428,6 +499,21 @@ export default function MesaPedidosTab({
                         />
                       </button>
                     </div>
+                  ) : paidByMe ? (
+                    <span
+                      className="font-poppins flex shrink-0 items-center font-semibold text-[#5B9A7A]"
+                      style={{
+                        fontSize: "var(--text-fluid-xs)",
+                        gap: "0.25rem",
+                      }}
+                    >
+                      <i
+                        aria-hidden="true"
+                        className="pi pi-check-circle"
+                        style={{ fontSize: "0.7rem" }}
+                      />
+                      Pago
+                    </span>
                   ) : null}
                 </div>
               ) : null}
@@ -480,21 +566,21 @@ export default function MesaPedidosTab({
           </article>
         ) : null}
 
-        {!loading && myItems.length === 0 && !hasCouvert ? (
+        {myItems.length === 0 && !hasCouvert ? (
           <div className="rounded-[10px_10px_25px_10px] border border-dashed border-[#418964]/25 bg-white p-6 text-center">
             <p
               className="font-poppins text-[#64835b]"
               style={{ fontSize: "var(--text-fluid-sm)" }}
             >
-              Você ainda não tem itens. Toque em “Adicionar item”.
+              Você ainda não tem itens. Toque em “Item +”.
             </p>
           </div>
         ) : null}
       </div>
 
-      {isCreateOpen ? (
+      {isCreateOpen && !disableAddItem ? (
         <CreateItemModal
-          participants={participantOptions}
+          participants={shareableParticipants}
           currentUid={user?.uid ?? ""}
           saving={saving}
           error={error}
@@ -505,7 +591,7 @@ export default function MesaPedidosTab({
 
       {editingItem ? (
         <CreateItemModal
-          participants={participantOptions}
+          participants={shareableParticipants}
           currentUid={user?.uid ?? ""}
           saving={saving}
           error={error}

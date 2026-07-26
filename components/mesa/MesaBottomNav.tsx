@@ -82,8 +82,8 @@ type Tab = {
 const TABS: Tab[] = [
   { id: "itens", label: "Itens", Icon: ItensIcon },
   { id: "mesa", label: "Mesa", Icon: MesaIcon },
-  { id: "historico", label: "Histórico", Icon: HistoricoIcon },
   { id: "pagamento", label: "Pagamento", Icon: PagamentoIcon },
+  { id: "historico", label: "Histórico", Icon: HistoricoIcon },
   { id: "ajustes", label: "Ajustes", Icon: AjustesIcon, adminOnly: true },
 ];
 

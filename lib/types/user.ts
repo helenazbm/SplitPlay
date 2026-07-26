@@ -7,7 +7,6 @@ export type User = {
   email?: string | null;
   avatarUrl?: string | null;
   coins: number;
-  ownedItemIds: string[];
   currentTableId: string | null;
   createdAt: Date;
   updatedAt: Date;

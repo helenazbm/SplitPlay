@@ -1,8 +1,9 @@
 "use client";
 
 import { centsToReais } from "@/lib/billing";
-import { useState } from "react";
 import Image from "next/image";
+import { useState } from "react";
+
 import ParticipantsComandaCard from "../ParticipantsCard";
 
 const brl = new Intl.NumberFormat("pt-BR", {
@@ -16,7 +17,7 @@ export type MesaParticipanteView = {
   displayName: string;
   isAdmin: boolean;
   paid: boolean;
-  subtotalCents?: number;
+  totalCents?: number;
 };
 
 type MesaParticipantesTabProps = {
@@ -39,12 +40,11 @@ export default function MesaParticipantesTab({
   onAssignAdmin,
 }: MesaParticipantesTabProps) {
   const pagos = participantes.filter((p) => p.paid).length;
+  const canManage = currentUserIsAdmin && Boolean(onAssignAdmin);
 
   const [selected, setSelected] = useState<MesaParticipanteView | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const canManage = currentUserIsAdmin && Boolean(onAssignAdmin);
 
   function openModal(participante: MesaParticipanteView) {
     setError(null);
@@ -106,10 +106,7 @@ export default function MesaParticipantesTab({
           Nenhum participante na mesa ainda.
         </p>
       ) : (
-        <ul
-          className="flex list-none flex-col"
-          style={{ gap: "19px" }}
-        >
+        <ul className="flex list-none flex-col" style={{ gap: "19px" }}>
           {participantes.map((participante) => {
             const clickable = canManage && !participante.isAdmin;
 
@@ -149,7 +146,7 @@ export default function MesaParticipantesTab({
             }}
           >
             <h3
-              className="font-poppins font-black text-center text-[#e5786c]"
+              className="font-poppins text-center font-black text-[#e5786c]"
               style={{ fontSize: "20px" }}
             >
               Modificar Participante
@@ -236,6 +233,18 @@ export default function MesaParticipantesTab({
           </div>
         </div>
       ) : null}
+
+      {error && !selected ? (
+        <p
+          className="font-poppins text-center text-[#c0392b]"
+          style={{
+            marginTop: "var(--spacing-fluid-3)",
+            fontSize: "var(--text-fluid-xs)",
+          }}
+        >
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -252,93 +261,93 @@ function ParticipanteRow({
   onClick,
 }: ParticipanteRowProps) {
   const content = (
-  <div className="flex justify-center">
-    <ParticipantsComandaCard >
-    <div className="flex flex-col h-full">
-  {/* Parte de cima */}
-    <div
-      className="flex items-center justify-between px-4"
-      style={{ height: "80px" }}
-    >
-      <div
-        className="flex min-w-0 items-center"
-        style={{ gap: "17px" }}
-      >
-        <span
-          className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#5B9A7A] font-poppins font-semibold text-white"
-          style={{
-            height: "56px",
-            width: "56px",
-            fontSize: "var(--text-fluid-xs)",
-          }}
-        >
-          {participante.avatarUrl ? (
-            <Image
-              src={participante.avatarUrl}
-              alt={participante.displayName}
-              width={52}
-              height={52}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            getInitials(participante.displayName)
-          )}
-        </span>
-
-        <div className="min-w-0 flex flex-col flex-1" style={{ gap: "6px" }}>
-          <p
-            className="font-poppins font-medium tracking-normal text-[#5B9A7A] truncate block w-full"
-            style={{ fontSize: "18px" }}
+    <div className="flex justify-center">
+      <ParticipantsComandaCard>
+        <div className="flex h-full flex-col">
+          <div
+            className="flex items-center justify-between px-4"
+            style={{ height: "80px" }}
           >
-            {participante.displayName}
-          </p>
+            <div
+              className="flex min-w-0 items-center"
+              style={{ gap: "17px" }}
+            >
+              <span
+                className="font-poppins flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#5B9A7A] font-semibold text-white"
+                style={{
+                  height: "56px",
+                  width: "56px",
+                  fontSize: "var(--text-fluid-xs)",
+                }}
+              >
+                {participante.avatarUrl ? (
+                  <Image
+                    src={participante.avatarUrl}
+                    alt={participante.displayName}
+                    width={56}
+                    height={56}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  getInitials(participante.displayName)
+                )}
+              </span>
 
-          <p
-            className="font-poppins font-normal tracking-normal text-[#8B8B8B]"
-            style={{ fontSize: "12px" }}
+              <div
+                className="flex min-w-0 flex-1 flex-col"
+                style={{ gap: "6px" }}
+              >
+                <p
+                  className="font-poppins block w-full truncate font-medium tracking-normal text-[#5B9A7A]"
+                  style={{ fontSize: "18px" }}
+                >
+                  {participante.displayName}
+                </p>
+
+                <p
+                  className="font-poppins font-normal tracking-normal text-[#8B8B8B]"
+                  style={{ fontSize: "12px" }}
+                >
+                  {participante.isAdmin ? "Administrador" : "Participante"}
+                </p>
+              </div>
+            </div>
+
+            {typeof participante.totalCents === "number" ? (
+              <strong
+                className="font-poppins font-bold text-[#E58A85]"
+                style={{ fontSize: "1.5rem" }}
+              >
+                {brl.format(centsToReais(participante.totalCents))}
+              </strong>
+            ) : null}
+          </div>
+
+          <div className="h-px bg-[#BCD0C3]" />
+
+          <div
+            className="flex items-center gap-2 px-4"
+            style={{ height: "30px" }}
           >
-            {participante.isAdmin ? "Administrador" : "Participante"}
-          </p>
+            <span
+              className="font-poppins text-[#7B7B7B]"
+              style={{ fontSize: "12px" }}
+            >
+              Status da Conta:
+            </span>
+
+            <span
+              className={`font-poppins ${
+                participante.paid ? "text-[#5B9A7A]" : "text-[#E58A85]"
+              }`}
+              style={{ fontSize: "12px" }}
+            >
+              {participante.paid ? "Pago" : "Pendente de pagamento"}
+            </span>
+          </div>
         </div>
-      </div>
-
-      {typeof participante.subtotalCents === "number" && (
-        <strong
-          className="font-poppins font-bold text-[#E58A85]"
-          style={{ fontSize: "1.5rem" }}
-        >
-          {brl.format(centsToReais(participante.subtotalCents))}
-        </strong>
-      )}
+      </ParticipantsComandaCard>
     </div>
-
-  {/* Divisor */}
-  <div className="h-px bg-[#BCD0C3]" />
-
-  {/* Parte de baixo */}
-  <div
-    className="flex items-center gap-2 px-4"
-    style={{ height: "30px" }}
-  >
-    <span
-      className="font-poppins text-[#7B7B7B]"
-      style={{ fontSize: "12px" }}
-    >
-      Status da Conta:
-    </span>
-
-    <span
-      className={`font-poppins ${
-        participante.paid ? "text-[#5B9A7A]" : "text-[#E58A85]"
-      }`}
-      style={{ fontSize: "12px" }}
-    >
-      {participante.paid ? "Pago" : "Pendente de pagamento"}
-    </span>
-  </div>
-    </div>
-    </ParticipantsComandaCard>
-  </div>
   );
 
   if (!clickable) {
@@ -350,7 +359,7 @@ function ParticipanteRow({
       type="button"
       onClick={onClick}
       aria-label={`Modificar ${participante.displayName}`}
-      className="transition active:scale-[0.99]"
+      className="w-full transition active:scale-[0.99]"
     >
       {content}
     </button>

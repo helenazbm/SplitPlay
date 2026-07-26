@@ -1,25 +1,11 @@
 import AccountChip from "@/components/home/AccountChip";
 import HomeActions from "@/components/home/HomeActions";
 import Image from "next/image";
-import Link from "next/link";
 
 export default function Home() {
   return (
     <div className="splitplay-home-pattern relative isolate flex min-h-dvh flex-1 overflow-x-hidden">
       <AccountChip variant="floating" />
-
-      <Link
-        href="/sobre"
-        aria-label="Informações sobre o SplitPlay"
-        className="font-poppins absolute right-[var(--spacing-fluid-4)] top-[var(--spacing-fluid-5)] z-20 flex items-center justify-center rounded-full border-2 border-white font-bold leading-none text-white"
-        style={{
-          height: "clamp(1.25rem, 5cqi, 1.75rem)",
-          width: "clamp(1.25rem, 5cqi, 1.75rem)",
-          fontSize: "var(--text-fluid-xs)",
-        }}
-      >
-        i
-      </Link>
 
       <main
         className="relative z-10 flex min-h-dvh w-full flex-col items-center justify-center"

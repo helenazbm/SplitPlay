@@ -2,6 +2,7 @@
 
 import AuthField from "@/components/AuthField";
 import EnterButton from "@/components/EnterButton";
+import AlreadyInTableModal from "@/components/mesa/AlreadyInTableModal";
 import WaveTop from "@/components/WaveTop";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import { getAuthErrorMessage } from "@/lib/services/authService";
@@ -23,10 +24,6 @@ import {
 } from "react";
 
 function getJoinErrorMessage(error: unknown): string {
-  if (error instanceof AlreadyInTableError) {
-    return "Você já está em outra mesa. Saia dela antes de entrar em uma nova.";
-  }
-
   const code =
     error && typeof error === "object" && "code" in error
       ? String((error as { code: unknown }).code)
@@ -48,6 +45,7 @@ function IdentificacaoMesaContent() {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTableId, setActiveTableId] = useState<string | null>(null);
   const autoJoining = useRef(false);
 
   const loginRedirect = `/mesa/entrar/identificacao?code=${encodeURIComponent(tableId)}`;
@@ -64,8 +62,12 @@ function IdentificacaoMesaContent() {
       .then(() => router.replace(`/mesa/${tableId}/painel`))
       .catch((err) => {
         autoJoining.current = false;
-        setError(getJoinErrorMessage(err));
         setLoading(false);
+        if (err instanceof AlreadyInTableError) {
+          setActiveTableId(err.tableId);
+        } else {
+          setError(getJoinErrorMessage(err));
+        }
       });
   }, [authLoading, user, tableId, router]);
 
@@ -88,8 +90,12 @@ function IdentificacaoMesaContent() {
       await joinTableAnonymously(tableId, trimmedName);
       router.push(`/mesa/${tableId}/painel`);
     } catch (err) {
-      setError(getJoinErrorMessage(err));
       setLoading(false);
+      if (err instanceof AlreadyInTableError) {
+        setActiveTableId(err.tableId);
+      } else {
+        setError(getJoinErrorMessage(err));
+      }
     }
   }
 
@@ -178,6 +184,15 @@ function IdentificacaoMesaContent() {
           </Link>
         </p>
       </section>
+
+      {activeTableId ? (
+        <AlreadyInTableModal
+          activeTableId={activeTableId}
+          description="Você já está em uma mesa. Volte para ela ou saia antes de entrar em outra."
+          secondaryLabel="Fechar"
+          onSecondary={() => setActiveTableId(null)}
+        />
+      ) : null}
     </main>
   );
 }

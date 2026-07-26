@@ -1,4 +1,9 @@
-import { signInAnonymously, updateProfile } from "firebase/auth";
+import {
+  deleteUser,
+  signInAnonymously,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
 import {
   collection,
   deleteDoc,
@@ -12,7 +17,9 @@ import {
   updateDoc,
 } from "firebase/firestore";
 
-import { auth, db } from "@/lib/firebase";
+import { httpsCallable } from "firebase/functions";
+
+import { auth, db, functions } from "@/lib/firebase";
 import type { Participant } from "@/lib/types/participant";
 import type { CreateTableInput, Table } from "@/lib/types/table";
 
@@ -24,6 +31,63 @@ export class AlreadyInTableError extends Error {
     this.name = "AlreadyInTableError";
     this.tableId = tableId;
   }
+}
+
+/**
+ * Estado financeiro de quem acabou de entrar na mesa: nada consumido, nada
+ * liquidado. As rules exigem exatamente esses valores no `create`.
+ */
+function freshParticipantState() {
+  return {
+    paid: false,
+    paidAt: null,
+    tipEnabled: false,
+    subtotalCents: 0,
+    totalCents: 0,
+    settledSubtotalCents: 0,
+    paidTotalCents: 0,
+    settledThroughAt: null,
+    couvertSettled: false,
+    left: false,
+  };
+}
+
+/**
+ * Normaliza o doc do participante, incluindo mesas anteriores às rodadas de
+ * consumo: `paidAmount` (em reais) vira `paidTotalCents`, e o consumo já pago
+ * daquelas mesas continua em `subtotalCents` — por isso o default 0 aqui.
+ */
+export function toParticipant(
+  data: Record<string, unknown>,
+  fallbackUid?: string,
+): Participant {
+  const legacyPaidAmount = Number(data.paidAmount ?? 0);
+  const paidAt = data.paidAt as { toDate?: () => Date } | null | undefined;
+  const settledThroughAt = data.settledThroughAt as
+    | { toDate?: () => Date }
+    | null
+    | undefined;
+  const joinedAt = data.joinedAt as { toDate?: () => Date } | null | undefined;
+
+  return {
+    uid: String(data.uid ?? fallbackUid ?? ""),
+    displayName: String(data.displayName ?? "Jogador"),
+    avatarUrl: (data.avatarUrl as string | null | undefined) ?? null,
+    isAnonymous: Boolean(data.isAnonymous),
+    joinedAt: joinedAt?.toDate?.() ?? new Date(),
+    paid: Boolean(data.paid),
+    paidAt: paidAt?.toDate?.() ?? null,
+    tipEnabled: Boolean(data.tipEnabled),
+    subtotalCents: Number(data.subtotalCents ?? 0),
+    totalCents: Number(data.totalCents ?? data.subtotalCents ?? 0),
+    settledSubtotalCents: Number(data.settledSubtotalCents ?? 0),
+    paidTotalCents: Number(
+      data.paidTotalCents ?? Math.round(legacyPaidAmount * 100),
+    ),
+    settledThroughAt: settledThroughAt?.toDate?.() ?? null,
+    couvertSettled: Boolean(data.couvertSettled),
+    left: Boolean(data.left),
+  };
 }
 
 function requireCurrentUser() {
@@ -39,14 +103,14 @@ function generateTableId(): string {
 }
 
 /**
- * Retorna o id da mesa ATIVA (aberta) em que o usuário está, ou null.
+ * Retorna a mesa ATIVA (aberta) em que o usuário está, ou null.
  * Se o currentTableId apontar para uma mesa encerrada/inexistente (ex.: o admin
  * encerrou enquanto o usuário estava offline), limpa a referência e retorna null.
  */
-async function getActiveTableId(
+async function getActiveTable(
   userRef: ReturnType<typeof doc>,
   currentTableId: string | null | undefined,
-): Promise<string | null> {
+): Promise<{ id: string; table: Table } | null> {
   if (!currentTableId) {
     return null;
   }
@@ -62,7 +126,7 @@ async function getActiveTableId(
     return null;
   }
 
-  return currentTableId;
+  return { id: currentTableId, table };
 }
 
 export async function createTable(input: CreateTableInput): Promise<string> {
@@ -81,12 +145,12 @@ export async function createTable(input: CreateTableInput): Promise<string> {
   }
 
   const userData = userSnapshot.data();
-  const activeTableId = await getActiveTableId(
+  const active = await getActiveTable(
     userRef,
     userData.currentTableId as string | null | undefined,
   );
-  if (activeTableId) {
-    throw new AlreadyInTableError(activeTableId);
+  if (active) {
+    throw new AlreadyInTableError(active.id);
   }
 
   const tableId = generateTableId();
@@ -100,6 +164,7 @@ export async function createTable(input: CreateTableInput): Promise<string> {
       tipPercent: input.tipPercent ?? 10,
       couvertSuggested: input.couvertSuggested ?? 0,
       status: "aberta",
+      paidUids: [],
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -114,12 +179,7 @@ export async function createTable(input: CreateTableInput): Promise<string> {
         (userData.avatarUrl as string | null | undefined) ?? current.photoURL ?? null,
       isAnonymous: false,
       joinedAt: serverTimestamp(),
-      paid: false,
-      paidAmount: 0,
-      paidAt: null,
-      tipEnabled: false,
-      subtotalCents: 0,
-      totalCents: 0,
+      ...freshParticipantState(),
     });
 
     await updateDoc(userRef, {
@@ -159,20 +219,23 @@ export async function getMyActiveTable(): Promise<{
     return null;
   }
 
-  const activeTableId = await getActiveTableId(
+  return getActiveTable(
     userRef,
     userSnapshot.data().currentTableId as string | null | undefined,
   );
-  if (!activeTableId) {
-    return null;
-  }
+}
 
-  const tableSnapshot = await getDoc(doc(db, "tables", activeTableId));
-  if (!tableSnapshot.exists()) {
-    return null;
-  }
-
-  return { id: activeTableId, table: tableSnapshot.data() as Table };
+/**
+ * Reabre a participação de quem já pagou e voltou a consumir. É callable porque
+ * `paid` e `paidUids` não podem ficar na mão do cliente — quem escreve `paid`
+ * escreve quanto deve. Idempotente no servidor.
+ */
+async function reopenParticipation(tableId: string): Promise<void> {
+  const call = httpsCallable<{ tableId: string }, void>(
+    functions,
+    "reopenParticipation",
+  );
+  await call({ tableId });
 }
 
 /**
@@ -182,29 +245,31 @@ export async function getMyActiveTable(): Promise<{
 export async function joinTable(tableId: string): Promise<void> {
   const current = requireCurrentUser();
 
-  const tableSnapshot = await getDoc(doc(db, "tables", tableId));
-  if (!tableSnapshot.exists()) {
-    throw new Error("Mesa não encontrada. Confira o código.");
-  }
-
-  const table = tableSnapshot.data() as Table;
-  if (table.status === "encerrada") {
-    throw new Error("Essa mesa já foi encerrada.");
-  }
-
   const userRef = doc(db, "users", current.uid);
   const userSnapshot = await getDoc(userRef);
   const userData = userSnapshot.exists() ? userSnapshot.data() : null;
 
-  const participantRef = doc(db, "tables", tableId, "participants", current.uid);
-  const alreadyParticipant = (await getDoc(participantRef)).exists();
-
-  const activeTableId = await getActiveTableId(
+  const active = await getActiveTable(
     userRef,
     userData?.currentTableId as string | null | undefined,
   );
+  const activeTableId = active?.id ?? null;
 
-  if (alreadyParticipant) {
+  const table = activeTableId === tableId ? active!.table : await getTable(tableId);
+  if (!table || table.status === "encerrada") {
+    throw new Error("Mesa não encontrada. Confira o código.");
+  }
+
+  const participantRef = doc(db, "tables", tableId, "participants", current.uid);
+  const participantSnapshot = await getDoc(participantRef);
+
+  if (participantSnapshot.exists()) {
+    if (participantSnapshot.data().paid === true) {
+      await reopenParticipation(tableId);
+    } else {
+      await updateDoc(participantRef, { left: false });
+    }
+
     if (activeTableId !== tableId) {
       await updateDoc(userRef, {
         currentTableId: tableId,
@@ -230,12 +295,7 @@ export async function joinTable(tableId: string): Promise<void> {
       (userData?.avatarUrl as string | null | undefined) ?? current.photoURL ?? null,
     isAnonymous: current.isAnonymous,
     joinedAt: serverTimestamp(),
-    paid: false,
-    paidAmount: 0,
-    paidAt: null,
-    tipEnabled: false,
-    subtotalCents: 0,
-    totalCents: 0,
+    ...freshParticipantState(),
   });
 
   await updateDoc(userRef, {
@@ -281,7 +341,6 @@ export async function joinTableAnonymously(
       displayName: trimmedName,
       email: null,
       coins: 0,
-      ownedItemIds: [],
       currentTableId: null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -292,12 +351,27 @@ export async function joinTableAnonymously(
 }
 
 /**
- * Remove o usuário atual da mesa e libera o currentTableId.
+ * Sai da mesa e libera o currentTableId.
+ *
+ * Convidado anônimo: a identidade morre junto com a saída.
  */
 export async function leaveTable(tableId: string): Promise<void> {
   const current = requireCurrentUser();
 
-  await deleteDoc(doc(db, "tables", tableId, "participants", current.uid));
+  await updateDoc(doc(db, "tables", tableId, "participants", current.uid), {
+    left: true,
+  });
+
+  if (current.isAnonymous) {
+    await deleteDoc(doc(db, "users", current.uid));
+    try {
+      await deleteUser(current);
+    } catch {
+      await signOut(auth);
+    }
+    return;
+  }
+
   await updateDoc(doc(db, "users", current.uid), {
     currentTableId: null,
     updatedAt: serverTimestamp(),
@@ -409,23 +483,9 @@ export function subscribeToParticipants(
   return onSnapshot(
     participantsQuery,
     (snapshot) => {
-      const participants = snapshot.docs.map((entry) => {
-        const data = entry.data();
-        return {
-          uid: data.uid as string,
-          displayName: data.displayName as string,
-          avatarUrl: (data.avatarUrl as string | null | undefined) ?? null,
-          isAnonymous: Boolean(data.isAnonymous),
-          joinedAt: data.joinedAt?.toDate?.() ?? new Date(),
-          paid: Boolean(data.paid),
-          paidAmount: (data.paidAmount as number) ?? 0,
-          paidAt: data.paidAt?.toDate?.() ?? null,
-          tipEnabled: Boolean(data.tipEnabled),
-          subtotalCents: (data.subtotalCents as number) ?? 0,
-          totalCents:
-            (data.totalCents as number) ?? (data.subtotalCents as number) ?? 0,
-        } satisfies Participant;
-      });
+      const participants = snapshot.docs.map((entry) =>
+        toParticipant(entry.data(), entry.id),
+      );
       onChange(participants);
     },
     (error) => onError?.(error),

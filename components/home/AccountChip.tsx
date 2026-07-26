@@ -34,7 +34,7 @@ export default function AccountChip({ variant = "floating" }: AccountChipProps) 
 
   const chipClassName =
     variant === "floating"
-      ? "sp-rise font-poppins absolute left-[var(--spacing-fluid-4)] top-[var(--spacing-fluid-5)] z-20 flex items-center justify-center rounded-full border-2 border-white bg-[#cde9da] font-bold text-[#418964] shadow-sm transition hover:bg-white active:scale-95"
+      ? "sp-rise font-poppins absolute right-[var(--spacing-fluid-4)] top-[var(--spacing-fluid-5)] z-20 flex items-center justify-center rounded-full border-2 border-white bg-[#cde9da] font-bold text-[#418964] shadow-sm transition hover:bg-white active:scale-95"
       : "font-poppins flex items-center justify-center rounded-full border-2 border-white bg-[#cde9da] font-bold text-[#418964] shadow-sm transition hover:bg-white active:scale-95";
 
   return (

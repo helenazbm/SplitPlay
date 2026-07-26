@@ -190,7 +190,7 @@ export default function MesaAdminTab({
               disabled={closing}
               className="font-poppins flex items-center justify-center rounded-[30px] bg-[#F1D4D3] font-semibold text-[#DA8280] transition hover:bg-[#e9c4c3] disabled:opacity-60"
               style={{
-                width: "105px",
+                width: "128px",
                 height: "28px",
                 fontSize: "var(--text-fluid-sm)",
               }}
@@ -203,7 +203,7 @@ export default function MesaAdminTab({
               disabled={closing}
               className="font-poppins flex items-center justify-center gap-2 rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] disabled:opacity-60"
               style={{
-                width: "105px",
+                width: "128px",
                 height: "28px",
                 fontSize: "var(--text-fluid-sm)",
               }}
@@ -232,6 +232,7 @@ function SettingRow({ icon, label, onClick }: SettingRowProps) {
       style={{
         padding: "var(--spacing-fluid-3)",
         gap: "var(--spacing-fluid-3)",
+        minHeight: "48px",
       }}
     >
       <i
@@ -240,7 +241,7 @@ function SettingRow({ icon, label, onClick }: SettingRowProps) {
         style={{ fontSize: "var(--text-fluid-lg)" }}
       />
       <span
-        className="font-poppins font-medium text-[#484c52]"
+        className="font-poppins whitespace-nowrap font-medium text-[#484c52]"
         style={{ fontSize: "var(--text-fluid-sm)" }}
       >
         {label}

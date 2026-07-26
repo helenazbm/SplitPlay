@@ -1,6 +1,7 @@
 "use client";
 
 import AuthField from "@/components/AuthField";
+import AlreadyInTableModal from "@/components/mesa/AlreadyInTableModal";
 import EditProfileModal from "@/components/perfil/EditProfileModal";
 import WaveTop from "@/components/WaveTop";
 import { useRouter } from "next/navigation";
@@ -15,12 +16,10 @@ import {
   upgradeAnonymousAccount,
 } from "@/lib/services/authService";
 import { getMyActiveTable } from "@/lib/services/tableService";
-import { getUserDoc } from "@/lib/services/userService";
+import { getUserDoc, reconcileRegisteredType } from "@/lib/services/userService";
 
 const MENU_ITEMS = [
-  { key: "stats", label: "Estatísticas", icon: "pi-chart-line" },
-  { key: "settings", label: "Configurações", icon: "pi-cog" },
-  { key: "help", label: "Ajuda", icon: "pi-question-circle" },
+  { key: "settings", label: "Editar Perfil", icon: "pi-pencil" },
 ] as const;
 
 export default function PerfilPage() {
@@ -44,6 +43,7 @@ export default function PerfilPage() {
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [blockedByTable, setBlockedByTable] = useState(false);
 
   const [registering, setRegistering] = useState(false);
   const [registerEmail, setRegisterEmail] = useState("");
@@ -66,7 +66,9 @@ export default function PerfilPage() {
       return;
     }
     let cancelled = false;
-    getUserDoc()
+    reconcileRegisteredType()
+      .catch(() => {})
+      .then(() => getUserDoc())
       .then((doc) => {
         if (!cancelled) {
           setCoins(doc?.coins ?? 0);
@@ -151,6 +153,11 @@ export default function PerfilPage() {
   }
 
   async function handleDelete() {
+    if (activeTableId) {
+      setConfirmingDelete(false);
+      setBlockedByTable(true);
+      return;
+    }
     setDeleting(true);
     setError(null);
     try {
@@ -226,43 +233,6 @@ export default function PerfilPage() {
           </h2>
 
           <div className="flex items-center" style={{ gap: "var(--spacing-fluid-3)" }}>
-            <span
-              className="font-poppins flex items-center rounded-full border border-[#f0d199] bg-[#fdf6e7] font-semibold text-[#d98a2b]"
-              style={{
-                gap: "var(--spacing-fluid-2)",
-                paddingInline: "var(--spacing-fluid-3)",
-                paddingBlock: "var(--spacing-fluid-2)",
-                fontSize: "var(--text-fluid-sm)",
-              }}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/avatars/moeda-icon.svg"
-                alt=""
-                aria-hidden="true"
-                className="object-contain"
-                style={{ height: "1.4rem", width: "1.4rem" }}
-              />
-              {coins ?? 0} moedas
-            </span>
-
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setEditing(true);
-              }}
-              className="font-poppins flex items-center rounded-full border border-[#418964]/40 bg-white font-semibold text-[#418964] transition hover:bg-[#eaf6ef] active:scale-95"
-              style={{
-                gap: "var(--spacing-fluid-2)",
-                paddingInline: "var(--spacing-fluid-3)",
-                paddingBlock: "var(--spacing-fluid-2)",
-                fontSize: "var(--text-fluid-sm)",
-              }}
-            >
-              <i aria-hidden="true" className="pi pi-pencil" style={{ fontSize: "var(--text-fluid-sm)" }} />
-              Editar Perfil
-            </button>
           </div>
         </div>
 
@@ -282,6 +252,10 @@ export default function PerfilPage() {
             <button
               key={item.key}
               type="button"
+              onClick={() => {
+              setError(null);
+              setEditing(true);
+            }}
               className="font-poppins flex items-center border-b border-[#eef0ec] text-left text-[#7a857c] transition hover:text-[#418964] active:scale-[0.99]"
               style={{
                 gap: "var(--spacing-fluid-3)",
@@ -488,6 +462,15 @@ export default function PerfilPage() {
           </div>
         )}
       </section>
+
+      {blockedByTable && activeTableId ? (
+        <AlreadyInTableModal
+          activeTableId={activeTableId}
+          description="Você precisa sair da mesa atual antes de excluir sua conta. Se você é o administrador, encerre a mesa primeiro."
+          secondaryLabel="Fechar"
+          onSecondary={() => setBlockedByTable(false)}
+        />
+      ) : null}
 
       {editing ? (
         <EditProfileModal

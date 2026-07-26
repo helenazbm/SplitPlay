@@ -2,6 +2,7 @@
 
 import AuthField from "@/components/AuthField";
 import EnterButton from "@/components/EnterButton";
+import AlreadyInTableModal from "@/components/mesa/AlreadyInTableModal";
 import FixedPricesModal from "@/components/mesa/FixedPricesModal";
 import WaveTop from "@/components/WaveTop";
 import { useAuth } from "@/lib/contexts/AuthContext";
@@ -12,7 +13,6 @@ import {
 } from "@/lib/services/tableService";
 import { getUserDoc } from "@/lib/services/userService";
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type SyntheticEvent } from "react";
 
@@ -197,63 +197,12 @@ export default function CriarMesaPage() {
       ) : null}
 
       {activeTableId ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="active-table-title"
-        >
-          <div
-            className="w-full max-w-sm rounded-[20px] bg-white shadow-xl"
-            style={{
-              padding: "var(--spacing-fluid-5)",
-              gap: "var(--spacing-fluid-4)",
-            }}
-          >
-            <h2
-              id="active-table-title"
-              className="font-bagel text-center text-[#418964]"
-              style={{ fontSize: "var(--text-fluid-xl)" }}
-            >
-              Você já está em uma mesa
-            </h2>
-            <p
-              className="font-poppins text-center text-[#64835b]"
-              style={{
-                marginTop: "var(--spacing-fluid-3)",
-                fontSize: "var(--text-fluid-sm)",
-              }}
-            >
-              Você precisa sair da mesa atual primeiro para criar uma nova.
-            </p>
-            <div
-              className="flex flex-col"
-              style={{
-                marginTop: "var(--spacing-fluid-4)",
-                gap: "var(--spacing-fluid-2)",
-              }}
-            >
-              <Link
-                href={`/mesa/${activeTableId}/painel`}
-                className="font-poppins flex items-center justify-center rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050]"
-                style={{
-                  height: "var(--height-control-md)",
-                  fontSize: "var(--text-fluid-base)",
-                }}
-              >
-                Ir para mesa atual
-              </Link>
-              <button
-                type="button"
-                onClick={() => router.push("/")}
-                className="font-poppins text-[#64835b] underline underline-offset-4"
-                style={{ fontSize: "var(--text-fluid-sm)" }}
-              >
-                Voltar para home
-              </button>
-            </div>
-          </div>
-        </div>
+        <AlreadyInTableModal
+          activeTableId={activeTableId}
+          description="Você precisa sair da mesa atual primeiro para criar uma nova."
+          secondaryLabel="Voltar para home"
+          onSecondary={() => router.push("/")}
+        />
       ) : null}
     </main>
   );

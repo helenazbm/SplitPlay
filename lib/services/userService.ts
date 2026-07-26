@@ -41,6 +41,9 @@ export async function ensureUserDoc(
   const snapshot = await getDoc(ref);
 
   if (snapshot.exists()) {
+    if (!firebaseUser.isAnonymous && snapshot.data().type === "anonymous") {
+      await promoteUserToRegistered(firebaseUser);
+    }
     return;
   }
 
@@ -57,7 +60,6 @@ export async function ensureUserDoc(
     email: firebaseUser.email ?? null,
     avatarUrl: avatarUrl ?? firebaseUser.photoURL ?? null,
     coins: SIGNUP_BONUS_COINS,
-    ownedItemIds: [],
     currentTableId: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -77,6 +79,18 @@ export async function promoteUserToRegistered(firebaseUser: FirebaseUser) {
     email: firebaseUser.email ?? null,
     updatedAt: serverTimestamp(),
   });
+}
+
+export async function reconcileRegisteredType(): Promise<void> {
+  const current = auth.currentUser;
+  if (!current || current.isAnonymous) {
+    return;
+  }
+
+  const snapshot = await getDoc(doc(db, "users", current.uid));
+  if (snapshot.exists() && snapshot.data().type === "anonymous") {
+    await promoteUserToRegistered(current);
+  }
 }
 
 export async function updateDisplayName(displayName: string) {

@@ -13,10 +13,8 @@
   "dependencies": {
     "firebase": "^12.15.0",
     "firebase-admin": "^13.10.0",
-    "html5-qrcode": "^2.3.8",
     "next": "^16.2.9",
     "primeicons": "^7.0.0",
-    "primereact": "^10.9.8",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-qr-code": "^2.2.0"

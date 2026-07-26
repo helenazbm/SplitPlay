@@ -1,11 +1,8 @@
 import {
   addDoc,
-  arrayRemove,
-  arrayUnion,
   collection,
   deleteDoc,
   doc,
-  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -16,7 +13,6 @@ import {
 import { auth, db } from "@/lib/firebase";
 import type {
   CreateTableItemInput,
-  TableItem,
   TableItemWithId,
   UpdateTableItemInput,
 } from "@/lib/types/item";
@@ -54,7 +50,11 @@ function normalizeItem(snapshotId: string, data: Record<string, unknown>): Table
     icon: data.icon ? String(data.icon) : null,
     consumerUids,
     ownerUid,
+    settled: data.settled === true,
     createdAt: data.createdAt,
+    createdAtMs:
+      (data.createdAt as { toMillis?: () => number } | null | undefined)
+        ?.toMillis?.() ?? null,
     updatedAt: data.updatedAt,
   };
 }
@@ -64,6 +64,22 @@ function buildConsumerUids(ownerUid: string, consumerUids: string[]): string[] {
   const unique = new Set(consumerUids.filter(Boolean));
   unique.add(ownerUid);
   return Array.from(unique);
+}
+
+function isPermissionDenied(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code: string }).code === "permission-denied"
+  );
+}
+
+function toItemWriteError(error: unknown, fallback: string): Error {
+  if (isPermissionDenied(error)) {
+    return new Error(fallback);
+  }
+  return error instanceof Error ? error : new Error(fallback);
 }
 
 export function subscribeToTableItems(
@@ -93,57 +109,9 @@ export function subscribeToTableItems(
   );
 }
 
-export function subscribeToTableParticipants(
-  tableId: string,
-  onChange: (participants: Array<{ uid: string; displayName: string; avatarUrl?: string | null; paid?: boolean }>) => void,
-  onError?: (error: Error) => void,
-) {
-  const participantsQuery = query(
-    collection(db, "tables", tableId, "participants"),
-    orderBy("joinedAt", "asc"),
-  );
-
-  return onSnapshot(
-    participantsQuery,
-    (snapshot) => {
-      onChange(
-        snapshot.docs.map((participantSnapshot) => {
-          const data = participantSnapshot.data() as Record<string, unknown>;
-
-          return {
-            uid: String(data.uid ?? participantSnapshot.id),
-            displayName: String(data.displayName ?? "Participante"),
-            avatarUrl: (data.avatarUrl as string | null | undefined) ?? null,
-            paid: Boolean(data.paid),
-          };
-        }),
-      );
-    },
-    (error) => {
-      onError?.(
-        error instanceof Error
-          ? error
-          : new Error("Não foi possível carregar os participantes."),
-      );
-    },
-  );
-}
-
 export async function createTableItem(tableId: string, input: CreateTableItemInput) {
   const current = requireCurrentUser();
   const name = input.name.trim();
-
-  const participantRef = doc(db, "tables", tableId, "participants", current.uid);
-  const participantSnapshot = await getDoc(participantRef);
-
-  if (!participantSnapshot.exists()) {
-    throw new Error("Participante não encontrado na mesa.");
-  }
-
-  const participantData = participantSnapshot.data() as { paid?: boolean };
-  if (participantData.paid === true) {
-    throw new Error("Pagamento já confirmado. Não é possível adicionar novos itens.");
-  }
 
   if (!name) {
     throw new Error("Nome do item é obrigatório.");
@@ -155,23 +123,26 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
 
   const consumerUids = buildConsumerUids(current.uid, input.consumerUids);
 
-  const itemRef = await addDoc(collection(db, "tables", tableId, "items"), {
-    name,
-    price: input.price,
-    quantity: input.quantity ?? 1,
-    icon: input.icon ?? null,
-    consumerUids,
-    ownerUid: current.uid,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    const itemRef = await addDoc(collection(db, "tables", tableId, "items"), {
+      name,
+      price: input.price,
+      quantity: input.quantity ?? 1,
+      icon: input.icon ?? null,
+      consumerUids,
+      ownerUid: current.uid,
+      settled: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
 
-  await updateDoc(doc(db, "users", current.uid), {
-    ownedItemIds: arrayUnion(itemRef.id),
-    updatedAt: serverTimestamp(),
-  });
-
-  return itemRef.id;
+    return itemRef.id;
+  } catch (error) {
+    throw toItemWriteError(
+      error,
+      "Não foi possível lançar o item. Se você já fechou a conta, saia da mesa e entre novamente para consumir mais.",
+    );
+  }
 }
 
 export async function updateTableItem(
@@ -180,19 +151,8 @@ export async function updateTableItem(
   input: UpdateTableItemInput,
 ) {
   const current = requireCurrentUser();
-  const itemRef = doc(db, "tables", tableId, "items", itemId);
-  const snapshot = await getDoc(itemRef);
-
-  if (!snapshot.exists()) {
-    throw new Error("Item não encontrado.");
-  }
-
-  const item = snapshot.data() as TableItem;
-  if (item.ownerUid !== current.uid) {
-    throw new Error("Apenas o dono pode editar este item.");
-  }
-
   const name = input.name.trim();
+
   if (!name) {
     throw new Error("Nome do item é obrigatório.");
   }
@@ -201,34 +161,32 @@ export async function updateTableItem(
     throw new Error("Informe um valor válido.");
   }
 
-  await updateDoc(itemRef, {
-    name,
-    price: input.price,
-    quantity: input.quantity ?? 1,
-    icon: input.icon ?? null,
-    consumerUids: buildConsumerUids(current.uid, input.consumerUids),
-    updatedAt: serverTimestamp(),
-  });
+  try {
+    await updateDoc(doc(db, "tables", tableId, "items", itemId), {
+      name,
+      price: input.price,
+      quantity: input.quantity ?? 1,
+      icon: input.icon ?? null,
+      consumerUids: buildConsumerUids(current.uid, input.consumerUids),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    throw toItemWriteError(
+      error,
+      "Não foi possível editar este item. Ele pode já ter sido pago ou pertencer a outra pessoa.",
+    );
+  }
 }
 
 export async function deleteTableItem(tableId: string, itemId: string) {
-  const current = requireCurrentUser();
-  const itemRef = doc(db, "tables", tableId, "items", itemId);
-  const snapshot = await getDoc(itemRef);
+  requireCurrentUser();
 
-  if (!snapshot.exists()) {
-    throw new Error("Item não encontrado.");
+  try {
+    await deleteDoc(doc(db, "tables", tableId, "items", itemId));
+  } catch (error) {
+    throw toItemWriteError(
+      error,
+      "Não foi possível excluir este item. Ele pode já ter sido pago ou pertencer a outra pessoa.",
+    );
   }
-
-  const item = snapshot.data() as TableItem;
-  if (item.ownerUid !== current.uid) {
-    throw new Error("Apenas o dono pode excluir este item.");
-  }
-
-  await deleteDoc(itemRef);
-
-  await updateDoc(doc(db, "users", current.uid), {
-    ownedItemIds: arrayRemove(itemId),
-    updatedAt: serverTimestamp(),
-  });
 }

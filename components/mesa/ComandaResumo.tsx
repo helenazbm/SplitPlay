@@ -27,6 +27,7 @@ type ComandaResumoProps = {
   numero?: number;
   itemCount: number;
   totalReais: number;
+  paidReais?: number;
 };
 
 /**
@@ -37,6 +38,7 @@ export default function ComandaResumo({
   numero = 1,
   itemCount,
   totalReais,
+  paidReais = 0,
 }: ComandaResumoProps) {
   return (
     <ComandaCard
@@ -106,6 +108,26 @@ export default function ComandaResumo({
           </span>
         </div>
       </div>
+
+      {paidReais > 0 ? (
+        <div
+          className="flex items-center justify-center"
+          style={{ gap: "var(--spacing-fluid-2)" }}
+        >
+          <span
+            className="font-poppins font-semibold text-[#8a948c]"
+            style={{ fontSize: "var(--text-fluid-xs)" }}
+          >
+            Já pago nesta mesa
+          </span>
+          <span
+            className="font-poppins font-bold text-[#5B9A7A]"
+            style={{ fontSize: "var(--text-fluid-xs)" }}
+          >
+            {brl.format(paidReais)}
+          </span>
+        </div>
+      ) : null}
     </ComandaCard>
   );
 }

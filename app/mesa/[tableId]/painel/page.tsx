@@ -3,10 +3,12 @@
 import MesaBottomNav, { type MesaTabId } from "@/components/mesa/MesaBottomNav";
 import MesaHeader from "@/components/mesa/MesaHeader";
 import MesaAdminTab from "@/components/mesa/tabs/MesaAdminTab";
+import MesaHistoricoTab from "@/components/mesa/tabs/MesaHistoricoTab";
 import MesaPagamentoTab from "@/components/mesa/tabs/MesaPagamentoTab";
 import MesaParticipantesTab from "@/components/mesa/tabs/MesaParticipantesTab";
 import MesaPedidosTab from "@/components/mesa/tabs/MesaPedidosTab";
 import { useAuth } from "@/lib/contexts/AuthContext";
+import { subscribeToTableItems } from "@/lib/services/itemService";
 import {
   closeTable,
   leaveTable,
@@ -16,10 +18,11 @@ import {
   transferAdmin,
   updateTableSettings,
 } from "@/lib/services/tableService";
+import type { TableItemWithId } from "@/lib/types/item";
 import type { Participant } from "@/lib/types/participant";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export default function MesaPainelPage() {
   const router = useRouter();
@@ -32,6 +35,9 @@ export default function MesaPainelPage() {
   const [couvert, setCouvert] = useState(0);
   const [tipPercent, setTipPercent] = useState(10);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [items, setItems] = useState<TableItemWithId[]>([]);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
@@ -39,19 +45,22 @@ export default function MesaPainelPage() {
   const [closed, setClosed] = useState(false);
   const [activeTab, setActiveTab] = useState<MesaTabId>("itens");
   const [showCreateItem, setShowCreateItem] = useState(false);
+  const leavingRef = useRef(false);
 
   const isAdmin = Boolean(user && adminUid && user.uid === adminUid);
 
   const participantesView = useMemo(
     () =>
-      participants.map((participante) => ({
-        uid: participante.uid,
-        displayName: participante.displayName,
-        avatarUrl: participante.avatarUrl ?? null,
-        isAdmin: participante.uid === adminUid,
-        paid: participante.paid,
-        subtotalCents: participante.subtotalCents,
-      })),
+      participants
+        .filter((participante) => !participante.left)
+        .map((participante) => ({
+          uid: participante.uid,
+          displayName: participante.displayName,
+          avatarUrl: participante.avatarUrl ?? null,
+          isAdmin: participante.uid === adminUid,
+          paid: participante.paid,
+          totalCents: participante.totalCents,
+        })),
     [participants, adminUid],
   );
 
@@ -61,7 +70,9 @@ export default function MesaPainelPage() {
     }
 
     if (!user) {
-      router.replace(`/login?redirect=/mesa/${tableId}/painel`);
+      if (!leavingRef.current) {
+        router.replace(`/login?redirect=/mesa/${tableId}/painel`);
+      }
       return;
     }
 
@@ -112,10 +123,27 @@ export default function MesaPainelPage() {
       },
     );
 
+    const unsubscribeItems = subscribeToTableItems(
+      tableId,
+      (list) => {
+        if (!cancelled) {
+          setItems(list);
+          setItemsLoaded(true);
+        }
+      },
+      () => {
+        if (!cancelled) {
+          setItemsError("Não foi possível carregar os itens.");
+          setItemsLoaded(true);
+        }
+      },
+    );
+
     return () => {
       cancelled = true;
       unsubscribeTable();
       unsubscribeParticipants();
+      unsubscribeItems();
     };
   }, [authLoading, user, router, tableId]);
 
@@ -129,14 +157,19 @@ export default function MesaPainelPage() {
   }, [closed, router]);
 
 
-  async function handleLeave() {
+  async function handleLeave(newAdminUid?: string) {
     setLeaving(true);
+    leavingRef.current = true;
     try {
+      if (newAdminUid) {
+        await transferAdmin(tableId, newAdminUid);
+      }
       await leaveTable(tableId);
-      router.push("/");
-    } catch {
-      setError("Não foi possível sair da mesa.");
+      router.replace("/");
+    } catch (nextError) {
+      leavingRef.current = false;
       setLeaving(false);
+      throw nextError;
     }
   }
 
@@ -144,6 +177,13 @@ export default function MesaPainelPage() {
     couvertSuggested: number;
     tipPercent: number;
   }) {
+    if (
+      settings.couvertSuggested === couvert &&
+      settings.tipPercent === tipPercent
+    ) {
+      return;
+    }
+
     // A subscription da mesa reflete o novo couvert na aba de itens.
     await updateTableSettings(tableId, settings);
   }
@@ -165,7 +205,7 @@ export default function MesaPainelPage() {
     }
   }
 
-  if (authLoading || loading) {
+  if (authLoading || loading || !itemsLoaded) {
     return (
       <main className="flex min-h-dvh flex-1 items-center justify-center bg-white text-[#418964]">
         <p
@@ -261,6 +301,9 @@ export default function MesaPainelPage() {
               onOpenCreate={() => setShowCreateItem(true)}
               onCloseCreate={() => setShowCreateItem(false)}
               couvert={couvert}
+              items={items}
+              participants={participants}
+              loadError={itemsError}
             />
           ) : null}
           {activeTab === "mesa" ? (
@@ -271,17 +314,24 @@ export default function MesaPainelPage() {
             />
           ) : null}
           {activeTab === "historico" ? (
-            <p
-              className="font-poppins text-center text-[#9bb0a4]"
-              style={{
-                paddingTop: "var(--spacing-fluid-6)",
-                fontSize: "var(--text-fluid-sm)",
-              }}
-            >
-              Histórico em breve.
-            </p>
+            <MesaHistoricoTab
+              participants={participants}
+              tipPercent={tipPercent}
+              currentUserIsAdmin={isAdmin}
+              onLeave={handleLeave}
+              onPayNow={() => setActiveTab("pagamento")}
+              leaving={leaving}
+            />
           ) : null}
-          {activeTab === "pagamento" ? <MesaPagamentoTab /> : null}
+          {activeTab === "pagamento" ? (
+            <MesaPagamentoTab
+              tableId={tableId}
+              items={items}
+              participants={participants}
+              couvert={couvert}
+              tipPercent={tipPercent}
+            />
+          ) : null}
           {activeTab === "ajustes" && isAdmin ? (
             <MesaAdminTab
               tableName={tableName}

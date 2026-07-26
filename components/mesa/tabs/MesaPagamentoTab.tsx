@@ -2,19 +2,19 @@
 
 import ComandaCard from "@/components/mesa/ComandaCard";
 import { useAuth } from "@/lib/contexts/AuthContext";
-import { centsToReais, userItemShareCents } from "@/lib/billing";
-import { foodIconSrc } from "@/lib/foodIcons";
-import { registerPayment } from "@/lib/services/paymentService";
-import { subscribeToTableItems } from "@/lib/services/itemService";
 import {
-  subscribeToTable,
-  subscribeToParticipants,
-} from "@/lib/services/tableService";
+  centsToReais,
+  isItemInCurrentRound,
+  tipCents,
+  userItemShareCents,
+} from "@/lib/billing";
+import { foodIconSrc } from "@/lib/foodIcons";
+import { registerPayment, setTipEnabled } from "@/lib/services/paymentService";
 import type { TableItemWithId } from "@/lib/types/item";
 import type { Participant } from "@/lib/types/participant";
 import Image from "next/image";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode, type SVGProps } from "react";
+import { useMemo, useState, type ReactNode, type SVGProps } from "react";
 
 const COMANDA_DIVIDER: React.CSSProperties = {
   borderBottom: "1.5px dashed #cdd5cd",
@@ -45,7 +45,7 @@ function ItemsConsumedStat({ count }: { count: number }) {
       style={{
         gap: "var(--spacing-fluid-2)",
         paddingTop: "20px",
-        paddingBottom: "33px",
+        paddingBottom: "20px",
         ...COMANDA_DIVIDER,
       }}
     >
@@ -99,104 +99,46 @@ type ReceiptLine = {
 
 type MesaPagamentoTabProps = {
   tableId?: string;
-  participants?: Participant[];
-  couvert?: number;
-  items?: TableItemWithId[];
+  participants: Participant[];
+  couvert: number;
+  items: TableItemWithId[];
+  tipPercent: number;
 };
 
 export default function MesaPagamentoTab({
   tableId: tableIdProp,
-  participants: participantsProp,
-  couvert: couvertProp,
-  items: itemsProp,
-}: MesaPagamentoTabProps = {}) {
+  participants,
+  couvert,
+  items,
+  tipPercent,
+}: MesaPagamentoTabProps) {
   const params = useParams<{ tableId: string }>();
   const tableId = tableIdProp ?? params.tableId;
   const { user } = useAuth();
 
-  const useProvidedData =
-    itemsProp !== undefined && participantsProp !== undefined && couvertProp !== undefined;
-
-  const [remoteItems, setRemoteItems] = useState<TableItemWithId[]>([]);
-  const [remoteParticipants, setRemoteParticipants] = useState<Participant[]>([]);
-  const [remoteCouvert, setRemoteCouvert] = useState(0);
-  const [loading, setLoading] = useState(() => !useProvidedData);
   const [registeringPayment, setRegisteringPayment] = useState(false);
+  const [togglingTip, setTogglingTip] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (useProvidedData || !tableId) return;
-
-    let cancelled = false;
-
-    const unsubItems = subscribeToTableItems(
-      tableId,
-      (nextItems) => {
-        if (!cancelled) {
-          setRemoteItems(nextItems);
-        }
-      },
-      (nextError) => {
-        if (!cancelled) {
-          setError(nextError.message);
-        }
-      },
-    );
-
-    const unsubParticipants = subscribeToParticipants(
-      tableId,
-      (nextParticipants) => {
-        if (!cancelled) {
-          setRemoteParticipants(nextParticipants);
-        }
-      },
-      (nextError) => {
-        if (!cancelled) {
-          setError(nextError.message);
-        }
-      },
-    );
-
-    const unsubTable = subscribeToTable(
-      tableId,
-      (table) => {
-        if (!cancelled) {
-          if (table) {
-            setRemoteCouvert(table.couvertSuggested ?? 0);
-          }
-          setLoading(false);
-        }
-      },
-      (nextError) => {
-        if (!cancelled) {
-          setError(nextError.message);
-          setLoading(false);
-        }
-      },
-    );
-
-    return () => {
-      cancelled = true;
-      unsubItems();
-      unsubParticipants();
-      unsubTable();
-    };
-  }, [tableId, useProvidedData]);
-
-  const items = itemsProp ?? remoteItems;
-  const participants = participantsProp ?? remoteParticipants;
-  const couvert = couvertProp ?? remoteCouvert;
 
   const currentParticipant = useMemo(
     () => participants.find((p) => p.uid === user?.uid) ?? null,
     [participants, user?.uid],
   );
 
-  // Itens consumidos pelo usuário (sozinho ou compartilhado)
   const myItems = useMemo(() => {
     if (!user) return [];
-    return items.filter((item) => item.consumerUids.includes(user.uid));
-  }, [items, user]);
+    const settledThroughMs =
+      currentParticipant?.settledThroughAt?.getTime() ?? null;
+
+    return items.filter(
+      (item) =>
+        item.consumerUids.includes(user.uid) &&
+        isItemInCurrentRound(
+          { price: item.price, consumerUids: item.consumerUids, createdAtMs: item.createdAtMs },
+          settledThroughMs,
+        ),
+    );
+  }, [items, user, currentParticipant?.settledThroughAt]);
 
   // Total do consumo do usuário (itens + couvert artístico + gorjeta)
   const itemsTotalCents = useMemo(() => {
@@ -206,15 +148,17 @@ export default function MesaPagamentoTab({
     }, 0);
   }, [myItems, user]);
 
-  const couvertCents = couvert > 0 ? Math.round(couvert * 100) : 0;
+  // Couvert é uma vez por pessoa: quem já pagou uma rodada não paga de novo.
+  const couvertCents =
+    couvert > 0 && currentParticipant?.couvertSettled !== true
+      ? Math.round(couvert * 100)
+      : 0;
+  const subtotalCents = itemsTotalCents + couvertCents;
+  const tipValueCents = currentParticipant?.tipEnabled
+    ? tipCents(subtotalCents, tipPercent)
+    : 0;
 
-  // A gorjeta deve refletir o que está na conta do usuário no backend (total/subtotal)
-  const tipValueCents = Math.max(
-    0,
-    (currentParticipant?.totalCents ?? 0) - (currentParticipant?.subtotalCents ?? 0),
-  );
-
-  const totalConsumptionCents = itemsTotalCents + couvertCents + tipValueCents;
+  const totalConsumptionCents = subtotalCents + tipValueCents;
 
   const receiptNumber = useMemo(() => {
     const participantIndex = participants.findIndex((participant) => participant.uid === user?.uid);
@@ -256,21 +200,23 @@ export default function MesaPagamentoTab({
     return lines;
   }, [couvertCents, myItems, tipValueCents, user]);
 
-  const shouldScrollReceiptLines = receiptLines.length > 4;
+  async function handleToggleTip() {
+    if (!currentParticipant || currentParticipant.paid || !tableId) return;
 
-  if (loading) {
-    return (
-      <div
-        className="flex flex-col items-center justify-center"
-        role="tabpanel"
-        aria-label="Pagamento"
-        style={{ minHeight: "18rem", gap: "var(--spacing-fluid-3)" }}
-      >
-        <p className="font-poppins text-[#418964]" style={{ fontSize: "var(--text-fluid-sm)" }}>
-          Carregando...
-        </p>
-      </div>
-    );
+    setTogglingTip(true);
+    setError(null);
+
+    try {
+      await setTipEnabled(tableId, !currentParticipant.tipEnabled);
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível alterar a gorjeta.",
+      );
+    } finally {
+      setTogglingTip(false);
+    }
   }
 
   async function handleRegisterPayment() {
@@ -310,13 +256,15 @@ export default function MesaPagamentoTab({
           size="lg"
           className="w-full max-w-[370px]"
           style={{
+            display: "flex",
+            flexDirection: "column",
             overflow: "hidden",
             borderTopLeftRadius: "10px",
             borderTopRightRadius: "10px",
             paddingInline: "var(--spacing-fluid-5)",
             paddingTop: "var(--spacing-fluid-3)",
             paddingBottom: "var(--spacing-fluid-5)",
-            gap: "var(--spacing-fluid-3)",
+            gap: 0,
           }}
         >
           <div
@@ -369,7 +317,7 @@ export default function MesaPagamentoTab({
             className="grid grid-cols-2"
             style={{
               columnGap: "var(--spacing-fluid-4)",
-              marginBottom: "33px",
+              marginBottom: "30px",
             }}
           >
             <ItemsConsumedStat count={myItems.length} />
@@ -396,24 +344,75 @@ export default function MesaPagamentoTab({
             />
           </div>
 
-          <div className="w-full" style={COMANDA_DIVIDER} />
+          {currentParticipant && tipPercent > 0 ? (
+            <div
+              className="flex items-center justify-between"
+              style={{ gap: "var(--spacing-fluid-3)", marginTop: "-20px" }}
+            >
+              <div className="flex min-w-0 flex-col">
+                <span
+                  className="font-poppins text-[#818282]"
+                  style={{
+                    fontSize: "15px",
+                    fontStyle: "normal",
+                    fontWeight: 500,
+                    lineHeight: "normal",
+                  }}
+                >
+                  Incluir {tipPercent}% do garçom
+                </span>
+              </div>
 
-          <div style={{ marginTop: "var(--spacing-fluid-4)" }}>
-            <p className="font-poppins font-black text-[#7c7d7d]" style={{ fontSize: "15px" }}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={currentParticipant.tipEnabled}
+                aria-label={`Incluir ${tipPercent}% do garçom`}
+                disabled={togglingTip || currentParticipant.paid}
+                onClick={() => void handleToggleTip()}
+                className="relative shrink-0 rounded-full transition disabled:opacity-50"
+                style={{
+                  height: "1.6rem",
+                  width: "2.9rem",
+                  backgroundColor: currentParticipant.tipEnabled
+                    ? "#CDE9DA"
+                    : "#e3e6e3",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  className="absolute rounded-full transition-all"
+                  style={{
+                    top: "0.2rem",
+                    height: "1.2rem",
+                    width: "1.2rem",
+                    left: currentParticipant.tipEnabled ? "1.5rem" : "0.2rem",
+                    backgroundColor: currentParticipant.tipEnabled
+                      ? "#418964"
+                      : "#b7bdb8",
+                  }}
+                />
+              </button>
+            </div>
+          ) : null}
+
+          <div className="w-full shrink-0" style={COMANDA_DIVIDER} />
+
+          <div className="flex min-h-0 flex-1 flex-col" style={{ marginTop: "var(--spacing-fluid-4)" }}>
+            <p className="font-poppins font-black text-[#7c7d7d] shrink-0" style={{ fontSize: "15px" }}>
               Itens consumidos
             </p>
 
             {currentParticipant ? (
               receiptLines.length > 0 ? (
                 <div
-                  className="receipt-lines-scrollbar"
+                  className="receipt-lines-scrollbar min-h-0 flex-1"
                   style={{
                     marginTop: "1rem",
-                    maxHeight: shouldScrollReceiptLines ? "10.5rem" : "none",
-                    overflowY: shouldScrollReceiptLines ? "auto" : "visible",
+                    overflowY: "auto",
                     scrollBehavior: "smooth",
-                    paddingRight: shouldScrollReceiptLines ? "0.35rem" : "0",
-                    marginBottom: "14px",
+                    paddingRight: "0.35rem",
+                    marginBottom: "5px",
                     scrollbarColor: "#D6D6D6 rgba(248, 246, 240, 0.90)",
                     scrollbarWidth: "thin",
                   }}
@@ -482,12 +481,12 @@ export default function MesaPagamentoTab({
                 type="button"
                 onClick={() => void handleRegisterPayment()}
                 disabled={registeringPayment || currentParticipant.paid}
-                className="mx-auto mt-6 flex items-center justify-center rounded-[30px] bg-[#CDE9DA] font-poppins font-semibold text-[#418964] transition hover:bg-[#bddfce] disabled:opacity-60"
+                className="mx-auto mt-6 flex shrink-0 items-center justify-center rounded-[30px] bg-[#CDE9DA] font-poppins font-semibold text-[#418964] transition hover:bg-[#bddfce] disabled:opacity-60"
                 style={{
-                  minHeight: "var(--height-control-sm)",
-                  paddingInline: "var(--spacing-fluid-5)",
+                  minHeight: "2.25rem",
+                  paddingInline: "var(--spacing-fluid-4)",
                   fontSize: "var(--text-fluid-sm)",
-                  width: "min(100%, 16rem)",
+                  width: "min(100%, 13.5rem)",
                   marginBottom: "10px",
                 }}
               >
@@ -553,7 +552,7 @@ function ReceiptStat({
       style={{
         gap: "var(--spacing-fluid-2)",
         paddingTop: "20px",
-        paddingBottom: "20px",
+        paddingBottom: "33px",
         ...COMANDA_DIVIDER,
       }}
     >

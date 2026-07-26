@@ -3,14 +3,46 @@
  */
 
 import { initializeApp } from "firebase-admin/app";
-import { FieldValue, getFirestore } from "firebase-admin/firestore";
+import { FieldValue, Timestamp, getFirestore } from "firebase-admin/firestore";
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
-import { logger } from "firebase-functions/v2";
+import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { logger, setGlobalOptions } from "firebase-functions/v2";
 
-import { userSubtotalCents, userTotalCents, type BillItem } from "./billing";
+import {
+  isItemInCurrentRound,
+  reaisToCents,
+  userSubtotalCents,
+  userTotalCents,
+  type BillItem,
+} from "./billing";
+
+setGlobalOptions({
+  region: "southamerica-east1",
+  maxInstances: 10,
+  memory: "256MiB",
+});
 
 initializeApp();
 const db = getFirestore();
+const MAX_EVENT_AGE_MS = 3 * 60 * 1000;
+
+function tooOldToRetry(eventTime: string, tableId: string): boolean {
+  if (Date.now() - Date.parse(eventTime) <= MAX_EVENT_AGE_MS) {
+    return false;
+  }
+  logger.error("Evento antigo demais — desistindo do reprocessamento", {
+    tableId,
+    eventTime,
+  });
+  return true;
+}
+
+function toMillis(value: unknown): number | null {
+  if (value && typeof (value as { toMillis?: unknown }).toMillis === "function") {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return null;
+}
 
 /** Lê os itens (com compat para o campo antigo `consumerUid`) de um snapshot. */
 function toBillItems(
@@ -30,8 +62,20 @@ function toBillItems(
       consumerUids = [ownerUid];
     }
 
-    return { price: Number(data.price ?? 0), consumerUids };
+    return {
+      price: Number(data.price ?? 0),
+      consumerUids,
+      createdAtMs: toMillis(data.createdAt),
+    };
   });
+}
+
+/** Rodada de consumo atual do participante (ver `settledThroughAt`). */
+function roundOf(participant: FirebaseFirestore.DocumentSnapshot) {
+  return {
+    settledThroughMs: toMillis(participant.get("settledThroughAt")),
+    couvertSettled: participant.get("couvertSettled") === true,
+  };
 }
 
 /**
@@ -66,7 +110,12 @@ async function recomputeBill(tableId: string): Promise<void> {
 
     let updated = 0;
     participantsSnap.docs.forEach((participant) => {
-      const subtotal = userSubtotalCents(participant.id, items, couvert);
+      const subtotal = userSubtotalCents(
+        participant.id,
+        items,
+        couvert,
+        roundOf(participant),
+      );
       const tipEnabled = participant.get("tipEnabled") === true;
       const total = userTotalCents(subtotal, tipPercent, tipEnabled);
 
@@ -88,10 +137,38 @@ async function recomputeBill(tableId: string): Promise<void> {
   });
 }
 
-/** Item criado/editado/excluído → recalcula a conta da mesa toda. */
+function billingSignature(
+  snapshot: FirebaseFirestore.DocumentSnapshot | undefined,
+): string | null {
+  if (!snapshot?.exists) {
+    return null;
+  }
+
+  const [item] = toBillItems([
+    snapshot as FirebaseFirestore.QueryDocumentSnapshot,
+  ]);
+
+  return JSON.stringify([
+    item.price,
+    [...item.consumerUids].sort(),
+    item.createdAtMs,
+  ]);
+}
+
 export const onItemWrite = onDocumentWritten(
-  "tables/{tableId}/items/{itemId}",
+  { document: "tables/{tableId}/items/{itemId}", retry: true },
   async (event) => {
+    const before = billingSignature(event.data?.before);
+    const after = billingSignature(event.data?.after);
+
+    if (before === after) {
+      return;
+    }
+
+    if (tooOldToRetry(event.time, event.params.tableId)) {
+      return;
+    }
+
     await recomputeBill(event.params.tableId);
   },
 );
@@ -102,7 +179,7 @@ export const onItemWrite = onDocumentWritten(
  * mudanças de nome/status/admin/etc.
  */
 export const onTableWrite = onDocumentWritten(
-  "tables/{tableId}",
+  { document: "tables/{tableId}", retry: true },
   async (event) => {
     const before = event.data?.before;
     const after = event.data?.after;
@@ -115,13 +192,17 @@ export const onTableWrite = onDocumentWritten(
       return;
     }
 
+    if (tooOldToRetry(event.time, event.params.tableId)) {
+      return;
+    }
+
     await recomputeBill(event.params.tableId);
   },
 );
 
 /**
- * Encerra a mesa quando todos os participantes estão com `paid === true`.
- * Idempotente: se a mesa já estiver encerrada ou ainda houver pendentes, não escreve.
+ * Encerra a mesa quando o ÚLTIMO participante ativo sai
+ *
  */
 async function maybeAutoCloseTable(tableId: string): Promise<void> {
   const tableRef = db.doc(`tables/${tableId}`);
@@ -145,20 +226,27 @@ async function maybeAutoCloseTable(tableId: string): Promise<void> {
       return;
     }
 
-    const allPaid = participantsSnap.docs.every(
-      (participant) => participant.get("paid") === true,
+    const active = participantsSnap.docs.filter(
+      (participant) => participant.get("left") !== true,
     );
 
-    if (!allPaid) {
+    if (active.length > 0) {
       return;
     }
+
+    const unpaid = participantsSnap.docs.filter(
+      (participant) => participant.get("paid") !== true,
+    ).length;
 
     tx.update(tableRef, {
       status: "encerrada",
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    logger.info("Mesa encerrada automaticamente — todos pagaram", { tableId });
+    logger.info("Mesa encerrada — último participante saiu", {
+      tableId,
+      unpaid,
+    });
   });
 }
 
@@ -167,17 +255,19 @@ async function maybeAutoCloseTable(tableId: string): Promise<void> {
  * recalcula. Não reage às próprias escritas de subtotalCents/totalCents (que não
  * mexem em tipEnabled nem criam docs), o que evita laço infinito com o gatilho.
  *
- * Quando `paid` vira true, tenta encerrar a mesa se todos já pagaram.
  */
 export const onParticipantWrite = onDocumentWritten(
-  "tables/{tableId}/participants/{participantId}",
+  { document: "tables/{tableId}/participants/{participantId}", retry: true },
   async (event) => {
+    if (tooOldToRetry(event.time, event.params.tableId)) {
+      return;
+    }
+
     const before = event.data?.before;
     const after = event.data?.after;
 
-    // Saída de participante: se os restantes já pagaram, pode encerrar.
     if (!after?.exists) {
-      if (before?.exists && before.get("paid") !== true) {
+      if (before?.exists) {
         await maybeAutoCloseTable(event.params.tableId);
       }
       return;
@@ -185,15 +275,146 @@ export const onParticipantWrite = onDocumentWritten(
 
     const isCreate = !before?.exists;
     const tipChanged = before?.get("tipEnabled") !== after.get("tipEnabled");
-    const justPaid =
-      after.get("paid") === true && before?.get("paid") !== true;
+    const justLeft =
+      after.get("left") === true && before?.get("left") !== true;
 
     if (isCreate || tipChanged) {
       await recomputeBill(event.params.tableId);
     }
 
-    if (justPaid) {
+    if (justLeft) {
       await maybeAutoCloseTable(event.params.tableId);
     }
   },
 );
+
+export const registerPayment = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Faça login para registrar o pagamento.");
+  }
+
+  const tableId = String(request.data?.tableId ?? "");
+  if (!tableId) {
+    throw new HttpsError("invalid-argument", "tableId é obrigatório.");
+  }
+
+  const tableRef = db.doc(`tables/${tableId}`);
+  const itemsRef = db.collection(`tables/${tableId}/items`);
+  const participantRef = db.doc(`tables/${tableId}/participants/${uid}`);
+
+  await db.runTransaction(async (tx) => {
+    const [tableSnap, itemsSnap, participantSnap] = await Promise.all([
+      tx.get(tableRef),
+      tx.get(itemsRef),
+      tx.get(participantRef),
+    ]);
+
+    if (!tableSnap.exists) {
+      throw new HttpsError("not-found", "Mesa não encontrada.");
+    }
+    if (tableSnap.get("status") === "encerrada") {
+      throw new HttpsError("failed-precondition", "Essa mesa já foi encerrada.");
+    }
+    if (!participantSnap.exists) {
+      throw new HttpsError("failed-precondition", "Você não é participante desta mesa.");
+    }
+    if (participantSnap.get("paid") === true) {
+      return; // já pago — idempotente
+    }
+
+    const couvert = Number(tableSnap.get("couvertSuggested") ?? 0);
+    const tipPercent = Number(tableSnap.get("tipPercent") ?? 0);
+    const items = toBillItems(itemsSnap.docs);
+    const round = roundOf(participantSnap);
+
+
+    const subtotal = userSubtotalCents(uid, items, couvert, round);
+    const tipEnabled = participantSnap.get("tipEnabled") === true;
+    const total = userTotalCents(subtotal, tipPercent, tipEnabled);
+    const couvertCents = round.couvertSettled ? 0 : reaisToCents(couvert);
+    const paidAt = Timestamp.now();
+
+    itemsSnap.docs.forEach((item) => {
+      if (item.get("settled") === true) {
+        return;
+      }
+      const billItem = toBillItems([item])[0];
+      if (
+        billItem.consumerUids.includes(uid) &&
+        isItemInCurrentRound(billItem, round.settledThroughMs)
+      ) {
+        tx.update(item.ref, { settled: true });
+      }
+    });
+
+    tx.set(participantRef.collection("payments").doc(), {
+      amountCents: total,
+      subtotalCents: subtotal,
+      tipCents: total - subtotal,
+      couvertCents,
+      paidAt,
+    });
+
+    tx.update(participantRef, {
+      subtotalCents: 0,
+      totalCents: 0,
+      settledSubtotalCents: FieldValue.increment(subtotal),
+      paidTotalCents: FieldValue.increment(total),
+      settledThroughAt: paidAt,
+      couvertSettled: true,
+      paid: true,
+      paidAt,
+    });
+    tx.update(tableRef, {
+      paidUids: FieldValue.arrayUnion(uid),
+    });
+
+    logger.info("Pagamento registrado", { tableId, uid, totalCents: total });
+  });
+});
+
+export const reopenParticipation = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Faça login para voltar à mesa.");
+  }
+
+  const tableId = String(request.data?.tableId ?? "");
+  if (!tableId) {
+    throw new HttpsError("invalid-argument", "tableId é obrigatório.");
+  }
+
+  const tableRef = db.doc(`tables/${tableId}`);
+  const participantRef = db.doc(`tables/${tableId}/participants/${uid}`);
+
+  await db.runTransaction(async (tx) => {
+    const [tableSnap, participantSnap] = await Promise.all([
+      tx.get(tableRef),
+      tx.get(participantRef),
+    ]);
+
+    if (!tableSnap.exists || tableSnap.get("status") === "encerrada") {
+      throw new HttpsError("not-found", "Mesa não encontrada. Confira o código.");
+    }
+    if (!participantSnap.exists) {
+      throw new HttpsError("failed-precondition", "Você não é participante desta mesa.");
+    }
+    if (participantSnap.get("paid") !== true) {
+      return;
+    }
+
+    tx.update(participantRef, {
+      paid: false,
+      paidAt: null,
+      left: false,
+      subtotalCents: 0,
+      totalCents: 0,
+    });
+    tx.update(tableRef, {
+      paidUids: FieldValue.arrayRemove(uid),
+    });
+
+    logger.info("Participação reaberta", { tableId, uid });
+  });
+});

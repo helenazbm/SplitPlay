@@ -2,6 +2,7 @@
 
 import AuthField from "@/components/AuthField";
 import EnterButton from "@/components/EnterButton";
+import AlreadyInTableModal from "@/components/mesa/AlreadyInTableModal";
 import WaveTop from "@/components/WaveTop";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import { getAuthErrorMessage } from "@/lib/services/authService";
@@ -15,10 +16,6 @@ import { useRouter } from "next/navigation";
 import { useState, type SyntheticEvent } from "react";
 
 function getJoinErrorMessage(error: unknown): string {
-  if (error instanceof AlreadyInTableError) {
-    return "Você já está em outra mesa. Saia dela antes de entrar em uma nova.";
-  }
-
   const code =
     error && typeof error === "object" && "code" in error
       ? String((error as { code: unknown }).code)
@@ -37,6 +34,7 @@ export default function EntrarMesaPage() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTableId, setActiveTableId] = useState<string | null>(null);
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -52,18 +50,19 @@ export default function EntrarMesaPage() {
         await joinTable(trimmedCode);
         router.push(`/mesa/${trimmedCode}/painel`);
       } catch (err) {
-        setError(getJoinErrorMessage(err));
         setLoading(false);
+        // Já está em outra mesa: oferece ir para ela.
+        if (err instanceof AlreadyInTableError) {
+          setActiveTableId(err.tableId);
+        } else {
+          setError(getJoinErrorMessage(err));
+        }
       }
       return;
     }
 
     // Visitante: segue para a etapa de identificação (nome anônimo ou login).
     router.push(`/mesa/entrar/identificacao?code=${encodeURIComponent(trimmedCode)}`);
-  }
-
-  function handleQrCode() {
-    router.push("/mesa/qrcode");
   }
 
   return (
@@ -131,6 +130,15 @@ export default function EntrarMesaPage() {
           />
         </form>
       </section>
+
+      {activeTableId ? (
+        <AlreadyInTableModal
+          activeTableId={activeTableId}
+          description="Você já está em uma mesa. Volte para ela ou saia antes de entrar em outra."
+          secondaryLabel="Fechar"
+          onSecondary={() => setActiveTableId(null)}
+        />
+      ) : null}
     </main>
   );
 }

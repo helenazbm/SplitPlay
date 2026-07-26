@@ -9,7 +9,27 @@
 export type BillItem = {
   price: number;
   consumerUids: string[];
+  createdAtMs?: number | null;
 };
+
+
+export type RoundOptions = {
+  settledThroughMs?: number | null;
+  couvertSettled?: boolean;
+};
+
+export function isItemInCurrentRound(
+  item: BillItem,
+  settledThroughMs: number | null,
+): boolean {
+  if (settledThroughMs === null) {
+    return true;
+  }
+  if (item.createdAtMs === null || item.createdAtMs === undefined) {
+    return true;
+  }
+  return item.createdAtMs > settledThroughMs;
+}
 
 export function reaisToCents(reais: number): number {
   if (!Number.isFinite(reais)) {
@@ -60,9 +80,15 @@ export function userSubtotalCents(
   uid: string,
   items: BillItem[],
   couvertReais = 0,
+  round: RoundOptions = {},
 ): number {
-  let cents = reaisToCents(couvertReais);
+  const settledThroughMs = round.settledThroughMs ?? null;
+
+  let cents = round.couvertSettled === true ? 0 : reaisToCents(couvertReais);
   for (const item of items) {
+    if (!isItemInCurrentRound(item, settledThroughMs)) {
+      continue;
+    }
     cents += userItemShareCents(uid, item);
   }
   return cents;

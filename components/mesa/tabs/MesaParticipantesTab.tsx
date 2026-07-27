@@ -331,29 +331,30 @@ function ParticipanteRow({
 
           <div className="h-px bg-[#BCD0C3]" />
 
-          <div
-            className="flex min-h-[30px] flex-wrap items-center gap-1"
-            style={{
-              paddingInline: "var(--spacing-fluid-3)",
-              paddingBlock: "4px",
-            }}
-          >
-            <span
-              className="font-poppins text-[#7B7B7B]"
-              style={{ fontSize: "var(--text-fluid-xs, 12px)" }}
-            >
-              Status da Conta:
-            </span>
+  <div
+    className="flex flex-wrap items-center gap-1"
+    style={{
+      paddingInline: "var(--spacing-fluid-3)",
+      paddingTop: "8px",
+      paddingBottom: "16px",
+    }}
+  >
+    <span
+      className="font-poppins text-[#7B7B7B]"
+      style={{ fontSize: "var(--text-fluid-xs, 12px)" }}
+    >
+      Status da Conta:
+    </span>
 
-            <span
-              className={`font-poppins ${
-                participante.paid ? "text-[#5B9A7A]" : "text-[#E58A85]"
-              }`}
-              style={{ fontSize: "var(--text-fluid-xs, 12px)" }}
-            >
-              {participante.paid ? "Pago" : "Pendente de pagamento"}
-            </span>
-          </div>
+    <span
+      className={`font-poppins ${
+        participante.paid ? "text-[#5B9A7A]" : "text-[#E58A85]"
+      }`}
+      style={{ fontSize: "var(--text-fluid-xs, 12px)" }}
+    >
+      {participante.paid ? "Pago" : "Pendente de pagamento"}
+    </span>
+  </div>
         </div>
       </ParticipantsComandaCard>
     </div>

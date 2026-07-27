@@ -75,7 +75,10 @@ export default function MesaParticipantesTab({
   return (
     <div
       className="flex flex-col"
-      style={{ gap: "var(--spacing-fluid-3)" }}
+      style={{
+        gap: "var(--spacing-fluid-3)",
+        marginTop: "16px"
+      }}
       role="tabpanel"
     >
       <div
@@ -106,7 +109,7 @@ export default function MesaParticipantesTab({
           Nenhum participante na mesa ainda.
         </p>
       ) : (
-        <ul className="flex list-none flex-col" style={{ gap: "19px" }}>
+        <ul className="flex list-none flex-col" style={{ gap: "19px", marginTop: "16px" }}>
           {participantes.map((participante) => {
             const clickable = canManage && !participante.isAdmin;
 
@@ -260,23 +263,26 @@ function ParticipanteRow({
   clickable,
   onClick,
 }: ParticipanteRowProps) {
-  const content = (
-    <div className="flex justify-center">
-      <ParticipantsComandaCard>
+    const content = (
+    <div className="flex w-full justify-center">
+      <ParticipantsComandaCard className="w-full max-w-[385px]">
         <div className="flex h-full flex-col">
           <div
-            className="flex items-center justify-between px-4"
-            style={{ height: "80px" }}
+            className="flex min-h-[80px] items-center justify-between gap-3"
+            style={{
+              paddingInline: "var(--spacing-fluid-3)",
+              paddingBlock: "var(--spacing-fluid-2)",
+            }}
           >
             <div
-              className="flex min-w-0 items-center"
-              style={{ gap: "17px" }}
+              className="flex min-w-0 flex-1 items-center"
+              style={{ gap: "clamp(10px, 4vw, 17px)" }}
             >
               <span
                 className="font-poppins flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#5B9A7A] font-semibold text-white"
                 style={{
-                  height: "56px",
-                  width: "56px",
+                  height: "clamp(44px, 12vw, 56px)",
+                  width: "clamp(44px, 12vw, 56px)",
                   fontSize: "var(--text-fluid-xs)",
                 }}
               >
@@ -299,14 +305,14 @@ function ParticipanteRow({
               >
                 <p
                   className="font-poppins block w-full truncate font-medium tracking-normal text-[#5B9A7A]"
-                  style={{ fontSize: "18px" }}
+                  style={{ fontSize: "var(--text-fluid-md, 18px)" }}
                 >
                   {participante.displayName}
                 </p>
 
                 <p
                   className="font-poppins font-normal tracking-normal text-[#8B8B8B]"
-                  style={{ fontSize: "12px" }}
+                  style={{ fontSize: "var(--text-fluid-xs, 12px)" }}
                 >
                   {participante.isAdmin ? "Administrador" : "Participante"}
                 </p>
@@ -315,8 +321,8 @@ function ParticipanteRow({
 
             {typeof participante.totalCents === "number" ? (
               <strong
-                className="font-poppins font-bold text-[#E58A85]"
-                style={{ fontSize: "1.5rem" }}
+                className="font-poppins shrink-0 whitespace-nowrap font-bold text-[#E58A85]"
+                style={{ fontSize: "clamp(1rem, 5vw, 1.5rem)" }}
               >
                 {brl.format(centsToReais(participante.totalCents))}
               </strong>
@@ -326,12 +332,15 @@ function ParticipanteRow({
           <div className="h-px bg-[#BCD0C3]" />
 
           <div
-            className="flex items-center gap-2 px-4"
-            style={{ height: "30px" }}
+            className="flex min-h-[30px] flex-wrap items-center gap-1"
+            style={{
+              paddingInline: "var(--spacing-fluid-3)",
+              paddingBlock: "4px",
+            }}
           >
             <span
               className="font-poppins text-[#7B7B7B]"
-              style={{ fontSize: "12px" }}
+              style={{ fontSize: "var(--text-fluid-xs, 12px)" }}
             >
               Status da Conta:
             </span>
@@ -340,7 +349,7 @@ function ParticipanteRow({
               className={`font-poppins ${
                 participante.paid ? "text-[#5B9A7A]" : "text-[#E58A85]"
               }`}
-              style={{ fontSize: "12px" }}
+              style={{ fontSize: "var(--text-fluid-xs, 12px)" }}
             >
               {participante.paid ? "Pago" : "Pendente de pagamento"}
             </span>

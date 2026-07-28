@@ -2,6 +2,8 @@
 
 import type { CSSProperties, SVGProps } from "react";
 
+import { centsToReais, tipCents } from "@/lib/billing";
+
 import ComandaCard from "./ComandaCard";
 
 const brl = new Intl.NumberFormat("pt-BR", {
@@ -28,6 +30,7 @@ type ComandaResumoProps = {
   itemCount: number;
   totalReais: number;
   paidReais?: number;
+  tipPercent?: number;
 };
 
 /**
@@ -39,7 +42,14 @@ export default function ComandaResumo({
   itemCount,
   totalReais,
   paidReais = 0,
+  tipPercent = 0,
 }: ComandaResumoProps) {
+  const subtotalCents = Math.round(totalReais * 100);
+  const totalWithTipReais = centsToReais(
+    subtotalCents + tipCents(subtotalCents, tipPercent),
+  );
+  const showTipTotal = tipPercent > 0;
+
   return (
     <ComandaCard
       size="sm"
@@ -108,6 +118,26 @@ export default function ComandaResumo({
           </span>
         </div>
       </div>
+
+      {showTipTotal ? (
+        <div
+          className="flex items-center justify-center"
+          style={{ gap: "var(--spacing-fluid-2)" }}
+        >
+          <span
+            className="font-poppins font-semibold text-[#8a948c]"
+            style={{ fontSize: "var(--text-fluid-xs)" }}
+          >
+            Total com {tipPercent}% do garçom
+          </span>
+          <span
+            className="font-poppins font-bold text-[#e5786c]"
+            style={{ fontSize: "var(--text-fluid-xs)" }}
+          >
+            {brl.format(totalWithTipReais)}
+          </span>
+        </div>
+      ) : null}
 
       {paidReais > 0 ? (
         <div

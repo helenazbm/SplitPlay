@@ -116,8 +116,8 @@ export function userSubtotalCents(
 }
 
 /**
- * Gorjeta (em centavos) sobre um subtotal, dado o percentual sugerido.
- * Arredonda para o centavo mais próximo. Opcional por participante.
+ * Gorjeta (em centavos) sobre um subtotal, dado o percentual definido pelo admin.
+ * Arredonda para o centavo mais próximo. Percentual zerado = sem gorjeta.
  */
 export function tipCents(subtotalCents: number, tipPercent: number): number {
   if (!Number.isFinite(tipPercent) || tipPercent <= 0) {
@@ -127,27 +127,32 @@ export function tipCents(subtotalCents: number, tipPercent: number): number {
 }
 
 /**
- * Total (em centavos) que o participante paga: subtotal + gorjeta, somente se
- * ele optou por incluí-la (tipEnabled). Se não optou, é igual ao subtotal.
+ * Total (em centavos) que o participante paga: subtotal + gorjeta. A gorjeta é
+ * obrigatória quando o admin define um percentual — o participante não opta por
+ * fora. Sem percentual (0), o total é igual ao subtotal.
  */
 export function userTotalCents(
   subtotalCents: number,
   tipPercent: number,
-  tipEnabled: boolean,
 ): number {
-  return subtotalCents + (tipEnabled ? tipCents(subtotalCents, tipPercent) : 0);
+  return subtotalCents + tipCents(subtotalCents, tipPercent);
 }
 
 /**
- * Saldo pendente da mesa (centavos): soma dos totais de quem ainda não pagou.
- * Fonte de verdade derivada — não precisa de campo persistido na mesa.
+ * Saldo pendente da mesa (centavos): soma dos totais de quem ainda não pagou,
+ * já com a gorjeta obrigatória. Fonte de verdade derivada — não precisa de campo
+ * persistido na mesa.
  */
 export function pendingBalanceCents(
-  participants: Array<{ paid: boolean; totalCents: number }>,
+  participants: Array<{ paid: boolean; subtotalCents: number }>,
+  tipPercent: number,
 ): number {
   return participants.reduce(
     (sum, participant) =>
-      sum + (participant.paid ? 0 : Math.max(0, participant.totalCents)),
+      sum +
+      (participant.paid
+        ? 0
+        : userTotalCents(Math.max(0, participant.subtotalCents), tipPercent)),
     0,
   );
 }

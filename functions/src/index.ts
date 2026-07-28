@@ -116,8 +116,7 @@ async function recomputeBill(tableId: string): Promise<void> {
         couvert,
         roundOf(participant),
       );
-      const tipEnabled = participant.get("tipEnabled") === true;
-      const total = userTotalCents(subtotal, tipPercent, tipEnabled);
+      const total = userTotalCents(subtotal, tipPercent);
 
       const changes: { subtotalCents?: number; totalCents?: number } = {};
       if (Number(participant.get("subtotalCents") ?? 0) !== subtotal) {
@@ -355,10 +354,9 @@ async function removeParticipantFromItems(
 }
 
 /**
- * Participante entrou (create) ou ligou/desligou a gorjeta (tipEnabled) →
- * recalcula. Não reage às próprias escritas de subtotalCents/totalCents (que não
- * mexem em tipEnabled nem criam docs), o que evita laço infinito com o gatilho.
- *
+ * Participante entrou (create) → recalcula. Não reage às próprias escritas de
+ * subtotalCents/totalCents (que não criam docs), o que evita laço infinito com
+ * o gatilho.
  */
 export const onParticipantWrite = onDocumentWritten(
   { document: "tables/{tableId}/participants/{participantId}", retry: true },
@@ -389,11 +387,10 @@ export const onParticipantWrite = onDocumentWritten(
     }
 
     const isCreate = !before?.exists;
-    const tipChanged = before?.get("tipEnabled") !== after.get("tipEnabled");
     const justLeft =
       after.get("left") === true && before?.get("left") !== true;
 
-    if (isCreate || tipChanged) {
+    if (isCreate) {
       await recomputeBill(event.params.tableId);
     }
 
@@ -445,8 +442,7 @@ export const registerPayment = onCall(async (request) => {
 
 
     const subtotal = userSubtotalCents(uid, items, couvert, round);
-    const tipEnabled = participantSnap.get("tipEnabled") === true;
-    const total = userTotalCents(subtotal, tipPercent, tipEnabled);
+    const total = userTotalCents(subtotal, tipPercent);
     const couvertCents = round.couvertSettled ? 0 : reaisToCents(couvert);
     const paidAt = Timestamp.now();
 

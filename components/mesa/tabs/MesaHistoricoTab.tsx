@@ -2,11 +2,8 @@
 
 import ComandaCard from "@/components/mesa/ComandaCard";
 import LeaveTableButton from "@/components/mesa/LeaveTableButton";
-import { centsToReais } from "@/lib/billing";
-import {
-  paidBalanceCents,
-  pendingBalanceCents,
-} from "@/lib/services/paymentService";
+import { centsToReais, pendingBalanceCents } from "@/lib/billing";
+import { paidBalanceCents } from "@/lib/services/paymentService";
 import type { Participant } from "@/lib/types/participant";
 import Image from "next/image";
 import { useMemo, type CSSProperties, type ReactNode } from "react";
@@ -84,7 +81,7 @@ export default function MesaHistoricoTab({
       gorjetaCents: gorjeta,
       totalComGorjetaCents: consumo + gorjeta,
       pagoCents: pago,
-      faltaCents: pendingBalanceCents(participants),
+      faltaCents: pendingBalanceCents(participants, tipPercent),
     };
   }, [participants, tipPercent]);
 

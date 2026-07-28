@@ -301,6 +301,7 @@ export default function MesaPainelPage() {
               onOpenCreate={() => setShowCreateItem(true)}
               onCloseCreate={() => setShowCreateItem(false)}
               couvert={couvert}
+              tipPercent={tipPercent}
               items={items}
               participants={participants}
               loadError={itemsError}

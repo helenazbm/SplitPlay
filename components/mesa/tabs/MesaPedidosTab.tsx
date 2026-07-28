@@ -38,6 +38,8 @@ type MesaPedidosTabProps = {
   onCloseCreate: () => void;
   /** Couvert artístico (por pessoa) definido pelo admin. Entra como item fixo. */
   couvert?: number;
+  /** % do garçom definida pelo admin. Exibida no resumo da comanda. */
+  tipPercent?: number;
   items: TableItemWithId[];
   participants: Participant[];
   /** Falha ao carregar os itens, vinda do listener da página. */
@@ -88,6 +90,7 @@ export default function MesaPedidosTab({
   onOpenCreate,
   onCloseCreate,
   couvert = 0,
+  tipPercent = 0,
   items,
   participants,
   loadError = null,
@@ -546,6 +549,7 @@ export default function MesaPedidosTab({
         itemCount={acceptedItems.length}
         totalReais={total}
         paidReais={centsToReais(myParticipant?.paidTotalCents ?? 0)}
+        tipPercent={tipPercent}
       />
 
       {toasts.length > 0 ? (

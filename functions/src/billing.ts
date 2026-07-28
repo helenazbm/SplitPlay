@@ -101,10 +101,13 @@ export function tipCents(subtotalCents: number, tipPercent: number): number {
   return Math.round((subtotalCents * tipPercent) / 100);
 }
 
+/**
+ * Gorjeta obrigatória: se o admin definiu um percentual, ele entra no total de
+ * todo mundo. O participante não opta por fora.
+ */
 export function userTotalCents(
   subtotalCents: number,
   tipPercent: number,
-  tipEnabled: boolean,
 ): number {
-  return subtotalCents + (tipEnabled ? tipCents(subtotalCents, tipPercent) : 0);
+  return subtotalCents + tipCents(subtotalCents, tipPercent);
 }

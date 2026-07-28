@@ -9,7 +9,7 @@ import {
   userItemShareCents,
 } from "@/lib/billing";
 import { foodIconSrc } from "@/lib/foodIcons";
-import { registerPayment, setTipEnabled } from "@/lib/services/paymentService";
+import { registerPayment } from "@/lib/services/paymentService";
 import type { TableItemWithId } from "@/lib/types/item";
 import type { Participant } from "@/lib/types/participant";
 import Image from "next/image";
@@ -117,7 +117,6 @@ export default function MesaPagamentoTab({
   const { user } = useAuth();
 
   const [registeringPayment, setRegisteringPayment] = useState(false);
-  const [togglingTip, setTogglingTip] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const currentParticipant = useMemo(
@@ -154,9 +153,8 @@ export default function MesaPagamentoTab({
       ? Math.round(couvert * 100)
       : 0;
   const subtotalCents = itemsTotalCents + couvertCents;
-  const tipValueCents = currentParticipant?.tipEnabled
-    ? tipCents(subtotalCents, tipPercent)
-    : 0;
+  // Gorjeta obrigatória: definida pelo admin, entra na conta de todo mundo.
+  const tipValueCents = tipCents(subtotalCents, tipPercent);
 
   const totalConsumptionCents = subtotalCents + tipValueCents;
 
@@ -191,33 +189,14 @@ export default function MesaPagamentoTab({
     if (tipValueCents > 0) {
       lines.push({
         id: "tip",
-        label: "% do Garçom",
+        label: `${tipPercent}% do Garçom`,
         priceCents: tipValueCents,
         iconSrc: null,
       });
     }
 
     return lines;
-  }, [couvertCents, myItems, tipValueCents, user]);
-
-  async function handleToggleTip() {
-    if (!currentParticipant || currentParticipant.paid || !tableId) return;
-
-    setTogglingTip(true);
-    setError(null);
-
-    try {
-      await setTipEnabled(tableId, !currentParticipant.tipEnabled);
-    } catch (nextError) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Não foi possível alterar a gorjeta.",
-      );
-    } finally {
-      setTogglingTip(false);
-    }
-  }
+  }, [couvertCents, myItems, tipPercent, tipValueCents, user]);
 
   async function handleRegisterPayment() {
     if (!currentParticipant || currentParticipant.paid) return;
@@ -343,58 +322,6 @@ export default function MesaPagamentoTab({
               }
             />
           </div>
-
-          {currentParticipant && tipPercent > 0 ? (
-            <div
-              className="flex items-center justify-between"
-              style={{ gap: "var(--spacing-fluid-3)", marginTop: "-20px" }}
-            >
-              <div className="flex min-w-0 flex-col">
-                <span
-                  className="font-poppins text-[#818282]"
-                  style={{
-                    fontSize: "15px",
-                    fontStyle: "normal",
-                    fontWeight: 500,
-                    lineHeight: "normal",
-                  }}
-                >
-                  Incluir {tipPercent}% do garçom
-                </span>
-              </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={currentParticipant.tipEnabled}
-                aria-label={`Incluir ${tipPercent}% do garçom`}
-                disabled={togglingTip || currentParticipant.paid}
-                onClick={() => void handleToggleTip()}
-                className="relative shrink-0 rounded-full transition disabled:opacity-50"
-                style={{
-                  height: "1.6rem",
-                  width: "2.9rem",
-                  backgroundColor: currentParticipant.tipEnabled
-                    ? "#CDE9DA"
-                    : "#e3e6e3",
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  className="absolute rounded-full transition-all"
-                  style={{
-                    top: "0.2rem",
-                    height: "1.2rem",
-                    width: "1.2rem",
-                    left: currentParticipant.tipEnabled ? "1.5rem" : "0.2rem",
-                    backgroundColor: currentParticipant.tipEnabled
-                      ? "#418964"
-                      : "#b7bdb8",
-                  }}
-                />
-              </button>
-            </div>
-          ) : null}
 
           <div className="w-full shrink-0" style={COMANDA_DIVIDER} />
 

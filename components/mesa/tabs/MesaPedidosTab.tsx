@@ -877,7 +877,7 @@ export default function MesaPedidosTab({
               className="font-poppins text-[#64835b]"
               style={{ fontSize: "var(--text-fluid-sm)" }}
             >
-              Você ainda não tem itens. Toque em “Adicionar item”.
+              Você ainda não tem itens. Toque em “Item +”.
             </p>
           </div>
         ) : null}

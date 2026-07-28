@@ -18,6 +18,7 @@ import ComandaResumo from "@/components/mesa/ComandaResumo";
 import CreateItemModal from "@/components/mesa/CreateItemModal";
 import {
   centsToReais,
+  isItemInCurrentRound,
   userItemShareCents,
   userSubtotalCents,
 } from "@/lib/billing";
@@ -61,14 +62,25 @@ const brl = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
-/** Chave estável para um `lastChange`, usada tanto pra dedupe de toast quanto pra "dispensar" um banner. */
-function changeKey(itemId: string, lastChange: ItemLastChange | null): string {
+/** Identidade estável de uma mensagem: o instante do `lastChange` que a gerou. */
+function changeMillis(lastChange: ItemLastChange | null): string {
   const at = lastChange?.at;
-  const millis =
-    at && typeof at === "object" && "toMillis" in at && typeof (at as { toMillis: () => number }).toMillis === "function"
-      ? (at as { toMillis: () => number }).toMillis()
-      : String(at ?? "");
-  return `${itemId}:${millis}`;
+  return at &&
+    typeof at === "object" &&
+    "toMillis" in at &&
+    typeof (at as { toMillis: () => number }).toMillis === "function"
+    ? String((at as { toMillis: () => number }).toMillis())
+    : String(at ?? "");
+}
+
+/** Chave estável para um `lastChange`, usada no dedupe de toast. */
+function changeKey(itemId: string, lastChange: ItemLastChange | null): string {
+  return `${itemId}:${changeMillis(lastChange)}`;
+}
+
+/** Avisos dispensados ficam por aba do navegador: a mesa é uma sessão curta. */
+function dismissStorageKey(tableId: string, uid: string): string {
+  return `splitplay:avisos-dispensados:${tableId}:${uid}`;
 }
 
 export default function MesaPedidosTab({
@@ -87,7 +99,9 @@ export default function MesaPedidosTab({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
-  const [dismissedKeys, setDismissedKeys] = useState<Set<string>>(new Set());
+  const [dismissedByItem, setDismissedByItem] = useState<Record<string, string>>(
+    {},
+  );
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dismissedLoadError, setDismissedLoadError] = useState<string | null>(
     null,
@@ -103,6 +117,22 @@ export default function MesaPedidosTab({
   useEffect(() => {
     userRef.current = user;
   }, [user]);
+  const storageKey = user ? dismissStorageKey(tableId, user.uid) : null;
+  useEffect(() => {
+    if (!storageKey) {
+      return;
+    }
+    let stored: Record<string, string> = {};
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw) {
+        stored = JSON.parse(raw) as Record<string, string>;
+      }
+    } catch {
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDismissedByItem(stored);
+  }, [storageKey]);
 
   // Aviso "fulano te removeu do item X": comparando com a rodada anterior,
   // detecta quando o usuário deixou de estar em consumerUids/pendingInvites de
@@ -245,7 +275,32 @@ export default function MesaPedidosTab({
     [items, user],
   );
 
-  // Couvert artístico é cobrado por pessoa: entra na conta de todos.
+  // Rodada atual do usuário. Quem paga e volta à mesa recomeça do zero: o consumo
+  // quitado (itens criados até `settledThroughAt`, mais o couvert) é
+  // cobrado outra vez. 
+  const myParticipant = useMemo(
+    () => participants.find((participant) => participant.uid === user?.uid) ?? null,
+    [participants, user],
+  );
+
+  const settledThroughMs = myParticipant?.settledThroughAt?.getTime() ?? null;
+
+  const round = useMemo(
+    () => ({
+      settledThroughMs,
+      couvertSettled: myParticipant?.couvertSettled === true,
+    }),
+    [settledThroughMs, myParticipant],
+  );
+
+  /** Item de uma rodada já quitada: sai do total e troca as ações por "Pago". */
+  function isSettledForMe(item: TableItemWithId): boolean {
+    return !isItemInCurrentRound(item, settledThroughMs);
+  }
+
+  // Couvert artístico é cobrado por pessoa: entra na conta de todos. Continua
+  // listado depois de quitado (com selo "Pago"), mas `couvertSettled` já o tirou
+  // do total — ninguém paga couvert duas vezes na mesma mesa.
   const hasCouvert = couvert > 0;
 
   // Item em edição (abre o modal pré-preenchido).
@@ -255,8 +310,10 @@ export default function MesaPedidosTab({
   // + couvert artístico. Evita erro de arredondamento do ponto flutuante.
   const total = useMemo(
     () =>
-      user ? centsToReais(userSubtotalCents(user.uid, acceptedItems, couvert)) : 0,
-    [acceptedItems, couvert, user],
+      user
+        ? centsToReais(userSubtotalCents(user.uid, acceptedItems, couvert, round))
+        : 0,
+    [acceptedItems, couvert, round, user],
   );
 
   async function handleCreateItem(data: {
@@ -431,11 +488,22 @@ export default function MesaPedidosTab({
   }
 
   function dismissBanner(itemId: string, lastChange: ItemLastChange | null) {
-    setDismissedKeys((current) => {
-      const next = new Set(current);
-      next.add(changeKey(itemId, lastChange));
-      return next;
-    });
+    const next: Record<string, string> = { [itemId]: changeMillis(lastChange) };
+    for (const item of items) {
+      const previous = dismissedByItem[item.id];
+      if (item.id !== itemId && previous) {
+        next[item.id] = previous;
+      }
+    }
+
+    setDismissedByItem(next);
+    if (storageKey) {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(next));
+      } catch {
+        // Storage cheio ou bloqueado: o dispensar vale só enquanto a aba viver.
+      }
+    }
   }
 
   function lastChangeBanner(item: TableItemWithId): string | null {
@@ -443,7 +511,7 @@ export default function MesaPedidosTab({
     if (!user || !lc || lc.byUid === user.uid) {
       return null;
     }
-    if (dismissedKeys.has(changeKey(item.id, lc))) {
+    if (dismissedByItem[item.id] === changeMillis(lc)) {
       return null;
     }
 
@@ -474,7 +542,11 @@ export default function MesaPedidosTab({
       aria-label="Pedidos"
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
-      <ComandaResumo itemCount={acceptedItems.length} totalReais={total} />
+      <ComandaResumo
+        itemCount={acceptedItems.length}
+        totalReais={total}
+        paidReais={centsToReais(myParticipant?.paidTotalCents ?? 0)}
+      />
 
       {toasts.length > 0 ? (
         <div
@@ -636,6 +708,7 @@ export default function MesaPedidosTab({
           const canDeleteOutright =
             item.consumerUids.length === 1 && item.pendingInvites.length === 0;
           const banner = lastChangeBanner(item);
+          const settledForMe = isSettledForMe(item);
 
           return (
             <article
@@ -760,42 +833,58 @@ export default function MesaPedidosTab({
                   </span>
                 )}
 
-                <div
-                  className="flex shrink-0 items-stretch overflow-hidden rounded-full border border-[#5F9C7D]"
-                  style={{ width: "60px", height: "20px" }}
-                >
-                  <button
-                    type="button"
-                    aria-label={canDeleteOutright ? "Excluir item" : "Sair do item"}
-                    title={canDeleteOutright ? "Excluir item" : "Sair do item"}
-                    disabled={saving}
-                    onClick={() => void handleLeave(item.id)}
-                    className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
-                  >
-                    <i
-                      aria-hidden="true"
-                      className="pi pi-trash"
-                      style={{ fontSize: "0.7rem" }}
-                    />
-                  </button>
+                {settledForMe ? (
+                  // Consumo de uma rodada já quitada: não há o que editar nem de
+                  // onde sair (as rules e `isItemLocked` recusariam), então a
+                  // pílula de ações vira o selo "Pago".
                   <span
-                    aria-hidden="true"
-                    className="w-px self-stretch bg-[#5F9C7D]/70"
-                  />
-                  <button
-                    type="button"
-                    aria-label="Editar item"
-                    disabled={saving}
-                    onClick={() => beginEdit(item)}
-                    className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                    className="font-poppins flex shrink-0 items-center justify-center rounded-full border border-[#5F9C7D] bg-[#eaf6ef] font-semibold text-[#5F9C7D]"
+                    style={{
+                      width: "60px",
+                      height: "20px",
+                      fontSize: "0.65rem",
+                    }}
                   >
-                    <i
+                    Pago
+                  </span>
+                ) : (
+                  <div
+                    className="flex shrink-0 items-stretch overflow-hidden rounded-full border border-[#5F9C7D]"
+                    style={{ width: "60px", height: "20px" }}
+                  >
+                    <button
+                      type="button"
+                      aria-label={canDeleteOutright ? "Excluir item" : "Sair do item"}
+                      title={canDeleteOutright ? "Excluir item" : "Sair do item"}
+                      disabled={saving}
+                      onClick={() => void handleLeave(item.id)}
+                      className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                    >
+                      <i
+                        aria-hidden="true"
+                        className="pi pi-trash"
+                        style={{ fontSize: "0.7rem" }}
+                      />
+                    </button>
+                    <span
                       aria-hidden="true"
-                      className="pi pi-pencil"
-                      style={{ fontSize: "0.7rem" }}
+                      className="w-px self-stretch bg-[#5F9C7D]/70"
                     />
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      aria-label="Editar item"
+                      disabled={saving}
+                      onClick={() => beginEdit(item)}
+                      className="flex flex-1 items-center justify-center text-[#5F9C7D] transition hover:bg-[#eaf6ef] disabled:opacity-50"
+                    >
+                      <i
+                        aria-hidden="true"
+                        className="pi pi-pencil"
+                        style={{ fontSize: "0.7rem" }}
+                      />
+                    </button>
+                  </div>
+                )}
               </div>
 
               {banner ? (
@@ -861,12 +950,30 @@ export default function MesaPedidosTab({
                 </p>
               </div>
 
-              <strong
-                className="font-poppins shrink-0 text-[#e5786c]"
-                style={{ fontSize: "var(--text-fluid-sm)" }}
+              <div
+                className="flex shrink-0 flex-col items-end"
+                style={{ gap: "var(--spacing-fluid-1)" }}
               >
-                {brl.format(couvert)}
-              </strong>
+                <strong
+                  className="font-poppins text-[#e5786c]"
+                  style={{ fontSize: "var(--text-fluid-sm)" }}
+                >
+                  {brl.format(couvert)}
+                </strong>
+
+                {round.couvertSettled ? (
+                  <span
+                    className="font-poppins flex items-center justify-center rounded-full border border-[#5F9C7D] bg-[#eaf6ef] font-semibold text-[#5F9C7D]"
+                    style={{
+                      width: "60px",
+                      height: "20px",
+                      fontSize: "0.65rem",
+                    }}
+                  >
+                    Pago
+                  </span>
+                ) : null}
+              </div>
             </div>
           </article>
         ) : null}

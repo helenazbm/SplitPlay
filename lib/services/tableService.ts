@@ -90,7 +90,7 @@ export function toParticipant(
   };
 }
 
-function requireCurrentUser() {
+export function requireCurrentUser() {
   const current = auth.currentUser;
   if (!current) {
     throw new Error("Usuário não autenticado.");
@@ -98,7 +98,7 @@ function requireCurrentUser() {
   return current;
 }
 
-function generateTableId(): string {
+export function generateTableId(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
 

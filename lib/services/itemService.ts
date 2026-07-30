@@ -71,6 +71,13 @@ function normalizeItem(snapshotId: string, data: Record<string, unknown>): Table
   };
 }
 
+/** Normaliza/valida o conjunto de quem divide o item: dono sempre incluído, sem repetições. */
+export function buildConsumerUids(ownerUid: string, consumerUids: string[]): string[] {
+  const unique = new Set(consumerUids.filter(Boolean));
+  unique.add(ownerUid);
+  return Array.from(unique);
+}
+
 function normalizeLastChange(raw: unknown): ItemLastChange | null {
   if (!raw || typeof raw !== "object") {
     return null;

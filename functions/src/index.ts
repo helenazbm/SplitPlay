@@ -57,11 +57,11 @@ function toBillItems(
       consumerUids = data.consumerUids.map((uid: unknown) => String(uid));
     } else if (data.consumerUid) {
       consumerUids = [String(data.consumerUid)];
-    }
-    if (consumerUids.length === 0 && ownerUid) {
+    } else if (ownerUid) {
       consumerUids = [ownerUid];
     }
 
+    // pendingInvites nunca entra no rateio — só quem já aceitou divide o item.
     return {
       price: Number(data.price ?? 0),
       consumerUids,
@@ -137,6 +137,45 @@ async function recomputeBill(tableId: string): Promise<void> {
   });
 }
 
+/**
+ * Se um item ficou sem ninguém (nem consumidor aceito, nem convite
+ * pendente), apaga o doc. Idempotente: se ainda houver alguém em qualquer um
+ * dos dois arrays, não faz nada. Retorna `true` se apagou.
+ *
+ * A transação revalida os arrays porque o snapshot do evento pode estar
+ * desatualizado — alguém pode ter aceitado o convite nesse intervalo.
+ */
+async function maybeDeleteEmptyItem(
+  tableId: string,
+  itemId: string,
+): Promise<boolean> {
+  const itemRef = db.doc(`tables/${tableId}/items/${itemId}`);
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(itemRef);
+    if (!snap.exists) {
+      return false;
+    }
+
+    const consumerUids: string[] = snap.get("consumerUids") ?? [];
+    const pendingInvites: string[] = snap.get("pendingInvites") ?? [];
+    if (consumerUids.length > 0 || pendingInvites.length > 0) {
+      return false;
+    }
+
+    tx.delete(itemRef);
+
+    logger.info("Item apagado (sem participantes)", { tableId, itemId });
+    return true;
+  });
+}
+
+/**
+ * Assinatura dos campos do item que ENTRAM na conta: preço, quem divide e a
+ * rodada a que pertence. Renomear, trocar o ícone, mudar a quantidade, marcar
+ * `settled` ou movimentar `pendingInvites` não altera o valor de ninguém —
+ * convite só pesa na conta quando vira `consumerUids`, no aceite.
+ */
 function billingSignature(
   snapshot: FirebaseFirestore.DocumentSnapshot | undefined,
 ): string | null {
@@ -155,11 +194,32 @@ function billingSignature(
   ]);
 }
 
+/** Item criado/editado → apaga se ficou vazio, senão recalcula a conta. */
 export const onItemWrite = onDocumentWritten(
   { document: "tables/{tableId}/items/{itemId}", retry: true },
   async (event) => {
+    const afterSnap = event.data?.after;
+
+    // Só entra na transação quando o snapshot já indica item órfão — evita
+    // uma leitura por escrita de item no caminho comum.
+    const looksEmpty =
+      afterSnap?.exists === true &&
+      ((afterSnap.get("consumerUids") as string[] | undefined) ?? []).length === 0 &&
+      ((afterSnap.get("pendingInvites") as string[] | undefined) ?? []).length === 0;
+
+    if (looksEmpty) {
+      const deleted = await maybeDeleteEmptyItem(
+        event.params.tableId,
+        event.params.itemId,
+      );
+      if (deleted) {
+        // A própria exclusão re-dispara este gatilho, que recalcula a conta.
+        return;
+      }
+    }
+
     const before = billingSignature(event.data?.before);
-    const after = billingSignature(event.data?.after);
+    const after = billingSignature(afterSnap);
 
     if (before === after) {
       return;
@@ -251,6 +311,50 @@ async function maybeAutoCloseTable(tableId: string): Promise<void> {
 }
 
 /**
+ * Participante saiu da mesa: remove o uid de `consumerUids`/`pendingInvites`
+ * de qualquer item onde ele estivesse (aceito ou convidado). Quem cuida da
+ * cascata de apagar itens que ficaram vazios é o próprio `onItemWrite`,
+ * reagindo a esta escrita.
+ */
+async function removeParticipantFromItems(
+  tableId: string,
+  uid: string,
+): Promise<void> {
+  const itemsRef = db.collection(`tables/${tableId}/items`);
+  const [consumerSnap, invitedSnap] = await Promise.all([
+    itemsRef.where("consumerUids", "array-contains", uid).get(),
+    itemsRef.where("pendingInvites", "array-contains", uid).get(),
+  ]);
+
+  if (consumerSnap.empty && invitedSnap.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  const seen = new Set<string>();
+  let count = 0;
+
+  [...consumerSnap.docs, ...invitedSnap.docs].forEach((docSnap) => {
+    if (seen.has(docSnap.ref.path)) {
+      return;
+    }
+    seen.add(docSnap.ref.path);
+
+    batch.update(docSnap.ref, {
+      consumerUids: FieldValue.arrayRemove(uid),
+      pendingInvites: FieldValue.arrayRemove(uid),
+      lastChange: { type: "leave", byUid: uid, targetUid: null, at: FieldValue.serverTimestamp() },
+    });
+    count += 1;
+  });
+
+  if (count > 0) {
+    await batch.commit();
+    logger.info("Participante removido de itens por sair da mesa", { tableId, uid, count });
+  }
+}
+
+/**
  * Participante entrou (create) ou ligou/desligou a gorjeta (tipEnabled) →
  * recalcula. Não reage às próprias escritas de subtotalCents/totalCents (que não
  * mexem em tipEnabled nem criam docs), o que evita laço infinito com o gatilho.
@@ -266,8 +370,19 @@ export const onParticipantWrite = onDocumentWritten(
     const before = event.data?.before;
     const after = event.data?.after;
 
+    // Saída de participante: remove-o dos itens em que estava e, se não sobrou
+    // ninguém ativo, encerra a mesa.
+    //
+    // `maybeAutoCloseTable` é chamado mesmo quando quem saiu já tinha pago: ele
+    // é idempotente e só encerra se de fato não houver mais ninguém ativo. Com
+    // a checagem de `paid` que existia aqui, uma mesa cujo último participante
+    // saía já quitado ficava aberta para sempre.
     if (!after?.exists) {
       if (before?.exists) {
+        await removeParticipantFromItems(
+          event.params.tableId,
+          event.params.participantId,
+        );
         await maybeAutoCloseTable(event.params.tableId);
       }
       return;

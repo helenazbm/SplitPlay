@@ -230,7 +230,7 @@ export async function getMyActiveTable(): Promise<{
  * `paid` e `paidUids` não podem ficar na mão do cliente — quem escreve `paid`
  * escreve quanto deve. Idempotente no servidor.
  */
-async function reopenParticipation(tableId: string): Promise<void> {
+export async function reopenParticipation(tableId: string): Promise<void> {
   const call = httpsCallable<{ tableId: string }, void>(
     functions,
     "reopenParticipation",

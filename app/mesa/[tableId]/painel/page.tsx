@@ -300,6 +300,8 @@ export default function MesaPainelPage() {
               isCreateOpen={showCreateItem}
               onOpenCreate={() => setShowCreateItem(true)}
               onCloseCreate={() => setShowCreateItem(false)}
+              onPayNow={() => setActiveTab("pagamento")}
+              tableName={tableName}
               couvert={couvert}
               items={items}
               participants={participants}
@@ -330,6 +332,7 @@ export default function MesaPainelPage() {
               participants={participants}
               couvert={couvert}
               tipPercent={tipPercent}
+              onShowSummary={() => setActiveTab("historico")}
             />
           ) : null}
           {activeTab === "ajustes" && isAdmin ? (

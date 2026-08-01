@@ -98,12 +98,11 @@ export default function MesaHistoricoTab({
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
 
-      <div className="flex justify-center">
+      <div className="flex flex-col items-center">
         <ComandaCard
           size="lg"
           className="w-full max-w-[370px]"
           style={{
-            overflow: "hidden",
             borderTopLeftRadius: "10px",
             borderTopRightRadius: "10px",
             paddingInline: "var(--spacing-fluid-5)",

@@ -4,10 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:emulators": "NEXT_PUBLIC_USE_FIREBASE_EMULATORS=true next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "jest"
+    "test": "jest",
+    "emulators": "npx -y firebase-tools@latest emulators:start --only auth,firestore,functions",
+    "test:integration": "npm --prefix functions run build && npx -y firebase-tools@latest emulators:exec --only auth,firestore,functions \"npx jest --config jest.integration.config.mjs --runInBand\""
   },
   "dependencies": {
     "firebase": "^12.15.0",

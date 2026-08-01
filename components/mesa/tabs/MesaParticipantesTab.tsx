@@ -276,7 +276,7 @@ function ParticipanteRow({
           >
             <div
               className="flex min-w-0 flex-1 items-center"
-              style={{ gap: "clamp(10px, 4vw, 17px)" }}
+              style={{ gap: "clamp(8px, 2vw, 10px)" }}
             >
               <span
                 className="font-poppins flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#5B9A7A] font-semibold text-white"

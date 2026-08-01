@@ -7,11 +7,11 @@ import {
   createTableItem,
   declineItemInvite,
   leaveItem,
-  PAID_MESSAGE,
   removeItemParticipant,
   SETTLED_MESSAGE,
   updateItemDetails,
 } from "@/lib/services/itemService";
+import { reopenParticipation } from "@/lib/services/tableService";
 import type { ItemLastChange, TableItemWithId } from "@/lib/types/item";
 import type { Participant } from "@/lib/types/participant";
 import ComandaResumo from "@/components/mesa/ComandaResumo";
@@ -36,6 +36,8 @@ type MesaPedidosTabProps = {
   isCreateOpen: boolean;
   onOpenCreate: () => void;
   onCloseCreate: () => void;
+  onPayNow: () => void;
+  tableName?: string | null;
   /** Couvert artístico (por pessoa) definido pelo admin. Entra como item fixo. */
   couvert?: number;
   items: TableItemWithId[];
@@ -87,6 +89,8 @@ export default function MesaPedidosTab({
   isCreateOpen,
   onOpenCreate,
   onCloseCreate,
+  onPayNow,
+  tableName = null,
   couvert = 0,
   items,
   participants,
@@ -103,6 +107,7 @@ export default function MesaPedidosTab({
     {},
   );
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [reopening, setReopening] = useState(false);
   const [dismissedLoadError, setDismissedLoadError] = useState<string | null>(
     null,
   );
@@ -298,6 +303,14 @@ export default function MesaPedidosTab({
     return !isItemInCurrentRound(item, settledThroughMs);
   }
 
+  const currentRoundItemCount = useMemo(
+    () =>
+      acceptedItems.filter((item) =>
+        isItemInCurrentRound(item, settledThroughMs),
+      ).length,
+    [acceptedItems, settledThroughMs],
+  );
+
   // Couvert artístico é cobrado por pessoa: entra na conta de todos. Continua
   // listado depois de quitado (com selo "Pago"), mas `couvertSettled` já o tirou
   // do total — ninguém paga couvert duas vezes na mesma mesa.
@@ -364,13 +377,26 @@ export default function MesaPedidosTab({
     setEditingItemId(item.id);
   }
 
-  function handleOpenCreate() {
+
+  async function handleOpenCreate() {
+    setError(null);
+
     if (currentParticipantPaid) {
-      setError(PAID_MESSAGE);
-      return;
+      setReopening(true);
+      try {
+        await reopenParticipation(tableId);
+      } catch (nextError) {
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : "Não foi possível reabrir sua participação.",
+        );
+        return;
+      } finally {
+        setReopening(false);
+      }
     }
 
-    setError(null);
     onOpenCreate();
   }
 
@@ -543,10 +569,26 @@ export default function MesaPedidosTab({
       style={{ gap: "var(--spacing-fluid-4)" }}
     >
       <ComandaResumo
-        itemCount={acceptedItems.length}
+        tableName={tableName}
+        itemCount={currentRoundItemCount}
         totalReais={total}
         paidReais={centsToReais(myParticipant?.paidTotalCents ?? 0)}
       />
+
+      <button
+        type="button"
+        onClick={onPayNow}
+        className="font-poppins flex w-full items-center justify-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#418964] transition hover:bg-[#bddfce] active:scale-95"
+        style={{
+          minHeight: "2.5rem",
+          paddingInline: "var(--spacing-fluid-4)",
+          fontSize: "var(--text-fluid-sm)",
+          gap: "0.45rem",
+        }}
+      >
+        <i aria-hidden="true" className="pi pi-credit-card" />
+        Ver minha comanda
+      </button>
 
       {toasts.length > 0 ? (
         <div
@@ -579,9 +621,10 @@ export default function MesaPedidosTab({
 
         <button
           type="button"
-          onClick={handleOpenCreate}
+          onClick={() => void handleOpenCreate()}
+          disabled={reopening}
           aria-label="Adicionar item"
-          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95"
+          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95 disabled:opacity-50"
           style={{
             height: "2rem",
             paddingInline: "var(--spacing-fluid-3)",

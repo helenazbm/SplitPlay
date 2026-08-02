@@ -105,6 +105,7 @@ export default function FixedPricesModal({
         >
           Porcentagem do Garçom (%)
           <input
+            data-cy="porcentagem"
             inputMode="decimal"
             value={tipPercent}
             onChange={(event) => setTipPercent(event.target.value)}
@@ -148,6 +149,7 @@ export default function FixedPricesModal({
             Cancelar
           </button>
           <button
+            data-cy="criarmesa2"
             type="button"
             onClick={() =>
               onConfirm({

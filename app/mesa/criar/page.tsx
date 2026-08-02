@@ -150,6 +150,7 @@ export default function CriarMesaPage() {
           style={{ gap: "var(--spacing-fluid-4)" }}
         >
           <AuthField
+            data-cy="nomemesa"
             label="Nome da mesa"
             name="name"
             type="text"
@@ -172,6 +173,7 @@ export default function CriarMesaPage() {
           ) : null}
 
           <EnterButton
+            data-cy="criarmesabutton"
             label={loading ? "Criando..." : "Criar mesa"}
             disabled={loading || !name.trim()}
             className="self-end"

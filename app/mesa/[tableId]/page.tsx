@@ -199,6 +199,7 @@ export default function MesaCompartilharPage() {
           </button>
 
           <Link
+            data-cy="irpmesa"
             href={`/mesa/${tableId}/painel`}
             className="font-poppins flex items-center justify-center rounded-[30px] bg-[#418964] font-semibold text-white transition hover:bg-[#367050]"
             style={{

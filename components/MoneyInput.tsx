@@ -39,6 +39,7 @@ export default function MoneyInput({
   return (
     <input
       {...rest}
+      data-cy="taxa"
       type="text"
       inputMode="numeric"
       value={display}

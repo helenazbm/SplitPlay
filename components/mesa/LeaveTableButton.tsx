@@ -111,6 +111,23 @@ export default function LeaveTableButton({
         {leaving ? "Saindo..." : "Sair da mesa"}
       </button>
 
+      <p
+        className="font-poppins text-center text-[#7a8a80]"
+        style={{
+          fontSize: "var(--text-fluid-xs)",
+          paddingInline: "var(--spacing-fluid-3)",
+          lineHeight: 1.5,
+        }}
+      >
+        <i
+          aria-hidden="true"
+          className="pi pi-info-circle"
+          style={{ marginRight: "0.35rem", fontSize: "0.8em" }}
+        />
+        Depois de confirmar seu pagamento, saia da mesa para encerrar sua
+        participação.
+      </p>
+
       {unpaidOpen ? (
         <div
           className="fixed inset-0 z-50 mx-auto flex w-full max-w-[420px] items-center justify-center"

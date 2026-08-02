@@ -25,17 +25,19 @@ function ForkKnifeIcon(props: SVGProps<SVGSVGElement>) {
 
 type ComandaResumoProps = {
   numero?: number;
+  tableName?: string | null;
   itemCount: number;
   totalReais: number;
   paidReais?: number;
 };
 
 /**
- * Card "Comanda #NN": resumo dos itens consumidos e total da parte do usuário,
- * no estilo recibo (ComandaCard). Layout fiel à tela "Itens - não adm".
+ * Card de resumo dos itens consumidos e total da parte do usuário, no estilo
+ * recibo (ComandaCard). Layout fiel à tela "Itens - não adm".
  */
 export default function ComandaResumo({
   numero = 1,
+  tableName = null,
   itemCount,
   totalReais,
   paidReais = 0,
@@ -47,7 +49,6 @@ export default function ComandaResumo({
       style={{
         borderTopLeftRadius: "10px",
         borderTopRightRadius: "10px",
-        overflow: "hidden",
         paddingInline: "var(--spacing-fluid-5)",
         paddingTop: "var(--spacing-fluid-3)",
         // espaço extra embaixo: deixa os divisores acima do recorte serrilhado.
@@ -56,10 +57,12 @@ export default function ComandaResumo({
       }}
     >
       <h2
-        className="font-poppins text-center font-black text-[#519472]"
-        style={{ fontSize: "20px" }}
+        className="font-poppins text-center font-black break-words text-[#519472]"
+        style={{ fontSize: "var(--text-fluid-lg)" }}
       >
-        Comanda #{String(numero).padStart(2, "0")}
+        {tableName?.trim()
+          ? `# ${tableName}`
+          : `Comanda #${String(numero).padStart(2, "0")}`}
       </h2>
 
       <div className="grid grid-cols-2" style={{ columnGap: "var(--spacing-fluid-4)" }}>

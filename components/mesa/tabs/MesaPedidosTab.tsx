@@ -620,6 +620,7 @@ export default function MesaPedidosTab({
         </h2>
 
         <button
+          data-cy="additem"
           type="button"
           onClick={() => void handleOpenCreate()}
           disabled={reopening}

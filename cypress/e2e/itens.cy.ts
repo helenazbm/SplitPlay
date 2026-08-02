@@ -1,9 +1,6 @@
-describe('user flow', () => {
+describe('Item flow', () => {
 
-  it('Describes the flow of add an item', () => {
-    let tableId
-    let valores = Number((Math.random() * 100).toFixed(2))
-
+  beforeEach(() => {
     cy.clearCookies()
     cy.clearLocalStorage(/firebase/)
 
@@ -22,25 +19,77 @@ describe('user flow', () => {
     cy.get('[data-cy="entrarmesa"]', { timeout: 10000 })
       .should('be.visible')
       .click()
+
     cy.url().should('include', 'mesa/entrar')
 
     cy.task('getTableId').then((tableId) => {
-      cy.log('tableId recebido:', String(tableId))
       cy.get('[data-cy="codigomesa"]')
         .clear()
         .type(String(tableId), { delay: 100 })
         .should('have.value', String(tableId))
     })
 
-    cy.get('[data-cy="botaoentrarmesa"]').click()
+    cy.get('[data-cy="botaoentrarmesa"]')
+      .should('not.be.disabled')
+      .click()
 
     cy.get('[data-cy="seunome"]').type('nominho')
-    cy.get('[data-cy="entrarnamesa"]').click()
 
-    cy.get('[data-cy="additem"]', { timeout: 10000 }).click()
-    cy.get('[data-cy="nomeitem"]').type('pizza')
-    cy.get('[dataa-cy="valoritem"]').type(valores.toString())
-    cy.get('[data-cy="adicionaritemdefato"]').click()
-    
+    cy.get('[data-cy="entrarnamesa"]')
+      .should('not.be.disabled')
+      .click()
+
   })
+
+  it('Adds an item', () => {
+    const valor = Number((Math.random() * 100).toFixed(2))
+
+    cy.get('[data-cy="additem"]')
+      .should('be.visible')
+      .click()
+
+    cy.get('[data-cy="nomeitem"]')
+      .type('Pizza')
+
+    cy.get('[dataa-cy="valoritem"]')
+      .type(valor.toString())
+
+    cy.get('[data-cy="adicionaritemdefato"]')
+      .click()
+
+    cy.contains('Pizza').should('exist')
+
+    cy.get('[data-cy="perfil"]').click()
+    cy.get('[data-cy="sair"').click()
+
+    cy.wait(3000)
+  })
+
+  it('Removes an item', () => {
+    const valor = Number((Math.random() * 100).toFixed(2))
+
+    cy.get('[data-cy="additem"]', { timeout: 10000 })
+      .should('be.visible')
+      .click()
+
+    cy.get('[data-cy="nomeitem"]')
+      .type('Pizza')
+
+    cy.get('[dataa-cy="valoritem"]')
+      .type(valor.toString())
+
+    cy.get('[data-cy="adicionaritemdefato"]')
+      .click()
+
+    cy.contains('Pizza').should('exist')
+
+    cy.contains('Pizza')
+      .parents('[data-cy="item"]')
+      .within(() => {
+        cy.get('[data-cy="removeritem"]').click()
+      })
+
+    cy.contains('Pizza').should('not.exist')
+  })
+
 })

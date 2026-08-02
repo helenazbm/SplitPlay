@@ -756,6 +756,7 @@ export default function MesaPedidosTab({
 
           return (
             <article
+              data-cy="item"
               key={item.id}
               className="w-full border"
               style={{
@@ -897,6 +898,7 @@ export default function MesaPedidosTab({
                     style={{ width: "60px", height: "20px" }}
                   >
                     <button
+                      data-cy="removeritem"
                       type="button"
                       aria-label={canDeleteOutright ? "Excluir item" : "Sair do item"}
                       title={canDeleteOutright ? "Excluir item" : "Sair do item"}

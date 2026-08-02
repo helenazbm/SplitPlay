@@ -23,6 +23,7 @@ export default function HomeActions() {
       }}
     >
       <Link
+        data-cy="entrarmesa"
         href="/mesa/entrar"
         className={PRIMARY_BUTTON}
         style={{

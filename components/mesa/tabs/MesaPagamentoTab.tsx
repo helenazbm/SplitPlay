@@ -52,7 +52,7 @@ function ItemsConsumedStat({ count }: { count: number }) {
       <span
         className="font-poppins text-[#7C7D7D]"
         style={{
-          fontSize: "15px",
+          fontSize: "13px",
           fontStyle: "normal",
           fontWeight: 800,
           lineHeight: "normal",
@@ -103,6 +103,7 @@ type MesaPagamentoTabProps = {
   couvert: number;
   items: TableItemWithId[];
   tipPercent: number;
+  onShowSummary?: () => void;
 };
 
 export default function MesaPagamentoTab({
@@ -111,6 +112,7 @@ export default function MesaPagamentoTab({
   couvert,
   items,
   tipPercent,
+  onShowSummary,
 }: MesaPagamentoTabProps) {
   const params = useParams<{ tableId: string }>();
   const tableId = tableIdProp ?? params.tableId;
@@ -288,7 +290,7 @@ export default function MesaPagamentoTab({
           <div className="h-0.5 w-[86%] self-center rounded-full bg-[#fffbf0]" />
 
           <h2
-            className="font-poppins text-center font-black text-[#519472]"
+            className="font-poppins truncate text-center font-black text-[#519472]"
             style={{ marginTop: "var(--spacing-fluid-1)", fontSize: "20px" }}
           >
             Comanda #{receiptNumber}
@@ -344,62 +346,14 @@ export default function MesaPagamentoTab({
             />
           </div>
 
-          {currentParticipant && tipPercent > 0 ? (
-            <div
-              className="flex items-center justify-between"
-              style={{ gap: "var(--spacing-fluid-3)", marginTop: "-20px" }}
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            style={{ marginTop: "var(--spacing-fluid-0)" }}
+          >
+            <p
+              className="font-poppins font-black text-[#7c7d7d] shrink-0"
+              style={{ fontSize: "15px", marginTop: "-15px" }}
             >
-              <div className="flex min-w-0 flex-col">
-                <span
-                  className="font-poppins text-[#818282]"
-                  style={{
-                    fontSize: "15px",
-                    fontStyle: "normal",
-                    fontWeight: 500,
-                    lineHeight: "normal",
-                  }}
-                >
-                  Incluir {tipPercent}% do garçom
-                </span>
-              </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={currentParticipant.tipEnabled}
-                aria-label={`Incluir ${tipPercent}% do garçom`}
-                disabled={togglingTip || currentParticipant.paid}
-                onClick={() => void handleToggleTip()}
-                className="relative shrink-0 rounded-full transition disabled:opacity-50"
-                style={{
-                  height: "1.6rem",
-                  width: "2.9rem",
-                  backgroundColor: currentParticipant.tipEnabled
-                    ? "#CDE9DA"
-                    : "#e3e6e3",
-                }}
-              >
-                <span
-                  aria-hidden="true"
-                  className="absolute rounded-full transition-all"
-                  style={{
-                    top: "0.2rem",
-                    height: "1.2rem",
-                    width: "1.2rem",
-                    left: currentParticipant.tipEnabled ? "1.5rem" : "0.2rem",
-                    backgroundColor: currentParticipant.tipEnabled
-                      ? "#418964"
-                      : "#b7bdb8",
-                  }}
-                />
-              </button>
-            </div>
-          ) : null}
-
-          <div className="w-full shrink-0" style={COMANDA_DIVIDER} />
-
-          <div className="flex min-h-0 flex-1 flex-col" style={{ marginTop: "var(--spacing-fluid-4)" }}>
-            <p className="font-poppins font-black text-[#7c7d7d] shrink-0" style={{ fontSize: "15px" }}>
               Itens consumidos
             </p>
 
@@ -475,28 +429,107 @@ export default function MesaPagamentoTab({
               </p>
             )}
           </div>
+          <div className="w-full shrink-0" style={{ ...COMANDA_DIVIDER}} />
 
-          {currentParticipant ? (
+          {currentParticipant && tipPercent > 0 ? (
+            <div
+              className="flex items-center justify-between"
+              style={{
+                gap: "var(--spacing-fluid-3)",
+                marginTop: "var(--spacing-fluid-2)",
+              }}
+            >
+              <div className="flex min-w-0 flex-col">
+                <span
+                  className="font-poppins text-[#818282]"
+                  style={{
+                    fontSize: "15px",
+                    fontStyle: "normal",
+                    fontWeight: 500,
+                    lineHeight: "normal",
+                  }}
+                >
+                  Incluir {tipPercent}% do garçom
+                </span>
+              </div>
+
               <button
                 type="button"
-                onClick={() => void handleRegisterPayment()}
-                disabled={registeringPayment || currentParticipant.paid}
-                className="mx-auto mt-6 flex shrink-0 items-center justify-center rounded-[30px] bg-[#CDE9DA] font-poppins font-semibold text-[#418964] transition hover:bg-[#bddfce] disabled:opacity-60"
+                role="switch"
+                aria-checked={currentParticipant.tipEnabled}
+                aria-label={`Incluir ${tipPercent}% do garçom`}
+                disabled={togglingTip || currentParticipant.paid}
+                onClick={() => void handleToggleTip()}
+                className="relative shrink-0 rounded-full transition disabled:opacity-50"
                 style={{
-                  minHeight: "2.25rem",
-                  paddingInline: "var(--spacing-fluid-4)",
-                  fontSize: "var(--text-fluid-sm)",
-                  width: "min(100%, 13.5rem)",
-                  marginBottom: "10px",
+                  height: "1.6rem",
+                  width: "2.9rem",
+                  backgroundColor: currentParticipant.tipEnabled
+                    ? "#CDE9DA"
+                    : "#e3e6e3",
                 }}
               >
-                {currentParticipant.paid
-                  ? "Pagamento registrado"
-                  : registeringPayment
-                    ? "Comprovando..."
-                    : "Confirmar Pagamento"}
+                <span
+                  aria-hidden="true"
+                  className="absolute rounded-full transition-all"
+                  style={{
+                    top: "0.2rem",
+                    height: "1.2rem",
+                    width: "1.2rem",
+                    left: currentParticipant.tipEnabled ? "1.5rem" : "0.2rem",
+                    backgroundColor: currentParticipant.tipEnabled
+                      ? "#418964"
+                      : "#b7bdb8",
+                  }}
+                />
               </button>
+            </div>
           ) : null}
+
+          {currentParticipant && !currentParticipant.paid ? (
+            <button
+              type="button"
+              onClick={() => void handleRegisterPayment()}
+              disabled={registeringPayment}
+              className="mx-auto mt-3 flex shrink-0 items-center justify-center rounded-[30px] bg-[#CDE9DA] font-poppins font-semibold text-[#418964] transition hover:bg-[#bddfce] disabled:opacity-60"
+              style={{
+                minHeight: "2.25rem",
+                paddingInline: "var(--spacing-fluid-4)",
+                fontSize: "var(--text-fluid-sm)",
+                width: "min(100%, 13.5rem)",
+              }}
+            >
+              {registeringPayment ? "Comprovando..." : "Confirmar Pagamento"}
+            </button>
+          ) : null}
+
+          <p
+            className="font-poppins shrink-0 text-center text-[#7a8a80]"
+            style={{
+              fontSize: "var(--text-fluid-xs)",
+              paddingInline: "var(--spacing-fluid-3)",
+              marginTop: "var(--spacing-fluid-2)",
+              marginBottom: "4px",
+              lineHeight: 1.5,
+            }}
+          >
+            <i
+              aria-hidden="true"
+              className="pi pi-info-circle"
+              style={{ marginRight: "0.35rem", fontSize: "0.8em" }}
+            />
+            {currentParticipant?.paid ? "Sua parte já está registrada. " : null}
+            Para acompanhar o quanto a mesa ainda tem a pagar, veja o{" "}
+            <button
+              type="button"
+              onClick={onShowSummary}
+              className="font-poppins font-semibold text-[#418964] underline underline-offset-2 transition hover:text-[#2f6b4b]"
+              style={{ fontSize: "inherit" }}
+            >
+              total da mesa
+            </button>
+            .
+          </p>
 
           {error ? (
             <p
@@ -559,7 +592,7 @@ function ReceiptStat({
       <span
         className="font-poppins text-[#7C7D7D]"
         style={{
-          fontSize: "15px",
+          fontSize: "13px",
           fontStyle: "normal",
           fontWeight: 800,
           lineHeight: "normal",

@@ -39,6 +39,7 @@ export default function AccountChip({ variant = "floating" }: AccountChipProps) 
 
   return (
     <Link
+      data-cy="perfil"
       href="/perfil"
       aria-label="Ir para o meu perfil"
       title="Minha conta"

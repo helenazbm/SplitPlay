@@ -163,6 +163,7 @@ export default function SignUpPage() {
           </div>
 
           <AuthField
+            data-cy="email"
             label="Email"
             name="email"
             type="email"
@@ -175,6 +176,7 @@ export default function SignUpPage() {
           />
 
           <AuthField
+            data-cy="username"
             label="Seu nome"
             name="username"
             type="text"
@@ -187,6 +189,7 @@ export default function SignUpPage() {
           />
 
           <AuthField
+            data-cy="password"
             label="Senha"
             name="password"
             type={showPassword ? "text" : "password"}
@@ -223,6 +226,7 @@ export default function SignUpPage() {
           ) : null}
 
           <EnterButton
+            data-cy="enter-button"
             label={loading ? "Criando..." : "Criar conta"}
             disabled={loading}
             className="self-end"

@@ -13,6 +13,7 @@ export const EnterButton = forwardRef<HTMLButtonElement, EnterButtonProps>(
   ) {
     return (
       <button
+        data-cy="entrarmesa"
         ref={ref}
         type={type}
         {...props}

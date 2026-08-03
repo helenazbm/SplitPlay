@@ -272,6 +272,7 @@ export default function PerfilPage() {
 
           {/* Sair: última opção do menu. */}
           <button
+            data-cy="sair"
             type="button"
             onClick={() => void handleSignOut()}
             disabled={signingOut}

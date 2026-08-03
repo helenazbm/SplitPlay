@@ -23,6 +23,7 @@ export default function HomeActions() {
       }}
     >
       <Link
+        data-cy="entrarmesa"
         href="/mesa/entrar"
         className={PRIMARY_BUTTON}
         style={{
@@ -33,7 +34,8 @@ export default function HomeActions() {
         Entrar em uma mesa
       </Link>
 
-      <Link
+      <Link 
+        data-cy="criarmesa" 
         href={criarMesaHref}
         className={PRIMARY_BUTTON}
         style={{
@@ -46,6 +48,7 @@ export default function HomeActions() {
 
       {!user ? (
         <Link
+          data-cy="criarconta"
           href="/signup"
           className="border-b border-white leading-tight text-white transition hover:text-[#fffbf0] focus:outline-none focus:ring-2 focus:ring-white/80 focus:ring-offset-4 focus:ring-offset-[#418964]"
           style={{

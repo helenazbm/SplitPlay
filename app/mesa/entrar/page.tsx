@@ -100,6 +100,7 @@ export default function EntrarMesaPage() {
           style={{ gap: "var(--spacing-fluid-4)" }}
         >
           <AuthField
+            data-cy="codigomesa"
             label="Código"
             name="code"
             type="text"
@@ -123,6 +124,7 @@ export default function EntrarMesaPage() {
           ) : null}
 
           <EnterButton
+            data-cy="botaoentrarmesa"
             label={loading ? "Entrando..." : "Entrar"}
             disabled={loading || authLoading || !code.trim()}
             className="self-end"

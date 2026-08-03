@@ -189,6 +189,7 @@ export default function CreateItemModal({
           Nome do item:
           <div className="relative">
             <input
+              data-cy="nomeitem"
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Ex.: Pizza Marguerita"
@@ -399,6 +400,7 @@ export default function CreateItemModal({
             Cancelar
           </button>
           <button
+            data-cy="adicionaritemdefato"
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}

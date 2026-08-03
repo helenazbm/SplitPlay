@@ -142,6 +142,7 @@ function IdentificacaoMesaContent() {
           style={{ gap: "var(--spacing-fluid-4)" }}
         >
           <AuthField
+            data-cy="seunome"
             label="Seu nome"
             name="name"
             type="text"
@@ -164,6 +165,7 @@ function IdentificacaoMesaContent() {
           ) : null}
 
           <EnterButton
+            data-cy="entrarnamesa"
             label={loading ? "Entrando..." : "Entrar como convidado"}
             disabled={loading || authLoading || !name.trim()}
             className="self-end"

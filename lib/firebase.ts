@@ -1,13 +1,14 @@
 import { Analytics, getAnalytics, isSupported } from "firebase/analytics";
 import { getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { connectAuthEmulator, getAuth } from "firebase/auth";
 import {
+  connectFirestoreEmulator,
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
 } from "firebase/firestore";
-import { getFunctions } from "firebase/functions";
+import { connectFunctionsEmulator, getFunctions } from "firebase/functions";
 
 export const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -24,7 +25,11 @@ const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 function createDb() {
-  if (typeof window === "undefined") {
+  // Emuladores / Node (Jest): sem cache persistente no IndexedDB.
+  if (
+    typeof window === "undefined" ||
+    process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === "true"
+  ) {
     return getFirestore(app);
   }
 
@@ -43,9 +48,28 @@ export const db = createDb();
 
 export const functions = getFunctions(app, "southamerica-east1");
 
+let emulatorsConnected = false;
+
+/** Liga o SDK aos emulators locais (Auth / Firestore / Functions). */
+export function connectFirebaseEmulators(): void {
+  if (emulatorsConnected || process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS !== "true") {
+    return;
+  }
+
+  connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+  connectFirestoreEmulator(db, "127.0.0.1", 8080);
+  connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+  emulatorsConnected = true;
+}
+
+connectFirebaseEmulators();
+
 export let analytics: Analytics | null = null;
 
-if (typeof window !== "undefined") {
+if (
+  typeof window !== "undefined" &&
+  process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS !== "true"
+) {
   isSupported()
     .then((yes) => {
       if (yes) {

@@ -10,8 +10,8 @@ import {
   AlreadyInTableError,
   createTable,
   getFirestoreErrorMessage,
+  getMyActiveTable,
 } from "@/lib/services/tableService";
-import { getUserDoc } from "@/lib/services/userService";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type SyntheticEvent } from "react";
@@ -41,13 +41,14 @@ export default function CriarMesaPage() {
 
     async function checkCurrentTable() {
       try {
-        const profile = await getUserDoc();
+        // getMyActiveTable ignora (e limpa) mesa encerrada/inexistente.
+        const active = await getMyActiveTable();
         if (cancelled) {
           return;
         }
 
-        if (profile?.currentTableId) {
-          setActiveTableId(profile.currentTableId);
+        if (active) {
+          setActiveTableId(active.id);
         }
       } catch {
         if (!cancelled) {

@@ -29,7 +29,7 @@ jest.mock("firebase/functions", () => ({
   httpsCallable: jest.fn(),
 }));
 
-import { toParticipant } from "@/lib/services/tableService";
+import { leaveTable, toParticipant } from "@/lib/services/tableService";
 
 describe("Table Service Helpers", () => {
   // Teste 12: toParticipant (dados modernos)
@@ -62,5 +62,27 @@ describe("Table Service Helpers", () => {
     expect(participant.paidTotalCents).toBe(4550); // Convertido para centavos
     expect(participant.subtotalCents).toBe(0); // Default para 0
     expect(participant.totalCents).toBe(0); // Default para 0
+  });
+});
+describe("leaveTable", () => {
+  test("anônimo que sai preserva users/{uid} e a conta de auth", async () => {
+    const { auth } = jest.requireMock("../../../../lib/firebase");
+    const { deleteUser, signOut } = jest.requireMock("firebase/auth");
+    const { deleteDoc, doc, updateDoc } = jest.requireMock("firebase/firestore");
+    auth.currentUser = { uid: "anon-1", isAnonymous: true };
+    doc.mockImplementation((_db: unknown, ...path: string[]) => path.join("/"));
+
+    await leaveTable("mesa-1");
+
+    expect(updateDoc).toHaveBeenCalledWith("tables/mesa-1/participants/anon-1", {
+      left: true,
+    });
+    expect(updateDoc).toHaveBeenCalledWith(
+      "users/anon-1",
+      expect.objectContaining({ currentTableId: null }),
+    );
+    expect(deleteDoc).not.toHaveBeenCalled();
+    expect(deleteUser).not.toHaveBeenCalled();
+    expect(signOut).not.toHaveBeenCalled();
   });
 });

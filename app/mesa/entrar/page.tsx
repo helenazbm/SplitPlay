@@ -9,11 +9,12 @@ import { getAuthErrorMessage } from "@/lib/services/authService";
 import {
   AlreadyInTableError,
   getFirestoreErrorMessage,
+  getMyActiveTable,
   joinTable,
 } from "@/lib/services/tableService";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState, type SyntheticEvent } from "react";
+import { useEffect, useState, type SyntheticEvent } from "react";
 
 function getJoinErrorMessage(error: unknown): string {
   const code =
@@ -35,6 +36,33 @@ export default function EntrarMesaPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
+  const [checkedUid, setCheckedUid] = useState<string | null>(null);
+  const checkingUser = Boolean(user) && checkedUid !== user?.uid;
+
+  useEffect(() => {
+    if (authLoading || !user) {
+      return;
+    }
+
+    let cancelled = false;
+
+    getMyActiveTable()
+      .then((active) => {
+        if (!cancelled && active) {
+          setActiveTableId(active.id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setCheckedUid(user.uid);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user]);
 
   async function handleSubmit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,6 +91,19 @@ export default function EntrarMesaPage() {
 
     // Visitante: segue para a etapa de identificação (nome anônimo ou login).
     router.push(`/mesa/entrar/identificacao?code=${encodeURIComponent(trimmedCode)}`);
+  }
+
+  if (authLoading || checkingUser) {
+    return (
+      <main className="flex min-h-dvh flex-1 items-center justify-center bg-[#418964] text-white">
+        <p
+          className="font-poppins"
+          style={{ fontSize: "var(--text-fluid-sm)" }}
+        >
+          Carregando...
+        </p>
+      </main>
+    );
   }
 
   return (
@@ -136,9 +177,9 @@ export default function EntrarMesaPage() {
       {activeTableId ? (
         <AlreadyInTableModal
           activeTableId={activeTableId}
-          description="Você já está em uma mesa. Volte para ela ou saia antes de entrar em outra."
-          secondaryLabel="Fechar"
-          onSecondary={() => setActiveTableId(null)}
+          description="Você precisa sair da mesa atual primeiro para entrar em outra."
+          secondaryLabel="Voltar para home"
+          onSecondary={() => router.push("/")}
         />
       ) : null}
     </main>

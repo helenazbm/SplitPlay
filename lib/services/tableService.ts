@@ -1,12 +1,6 @@
-import {
-  deleteUser,
-  signInAnonymously,
-  signOut,
-  updateProfile,
-} from "firebase/auth";
+import { signInAnonymously, updateProfile } from "firebase/auth";
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
@@ -353,7 +347,8 @@ export async function joinTableAnonymously(
 /**
  * Sai da mesa e libera o currentTableId.
  *
- * Convidado anônimo: a identidade morre junto com a saída.
+ * Igual para anônimo e registrado: a conta é preservada, então quem volta pelo
+ * mesmo navegador reencontra o próprio participante (ver joinTable).
  */
 export async function leaveTable(tableId: string): Promise<void> {
   const current = requireCurrentUser();
@@ -361,16 +356,6 @@ export async function leaveTable(tableId: string): Promise<void> {
   await updateDoc(doc(db, "tables", tableId, "participants", current.uid), {
     left: true,
   });
-
-  if (current.isAnonymous) {
-    await deleteDoc(doc(db, "users", current.uid));
-    try {
-      await deleteUser(current);
-    } catch {
-      await signOut(auth);
-    }
-    return;
-  }
 
   await updateDoc(doc(db, "users", current.uid), {
     currentTableId: null,

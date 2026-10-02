@@ -1,0 +1,28 @@
+{
+  "activeProfile": "free",
+  "referenceProfile": "paid",
+  "profiles": {
+    "mock": {
+      "provider": "mock"
+    },
+    "free": {
+      "provider": "openrouter",
+      "model": "google/gemma-4-31b-it:free",
+      "structuredOutputs": false,
+      "pricingUsdPerMillion": { "input": 0, "output": 0 }
+    },
+    "paid": {
+      "provider": "openrouter",
+      "model": "google/gemini-3.5-flash-lite",
+      "structuredOutputs": true,
+      "pricingUsdPerMillion": { "input": 0.3, "output": 2.5 }
+    }
+  },
+  "limits": {
+    "maxImages": 3,
+    "maxImageBytes": 4000000,
+    "maxOutputTokens": 8000,
+    "timeoutMs": 60000,
+    "maxMenuItems": 300
+  }
+}

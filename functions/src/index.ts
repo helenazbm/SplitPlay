@@ -8,6 +8,7 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { logger, setGlobalOptions } from "firebase-functions/v2";
 
+import { AiError, MenuReaderClient, aiSecrets, type UsageSink } from "./ai";
 import {
   isItemInCurrentRound,
   reaisToCents,
@@ -15,6 +16,15 @@ import {
   userTotalCents,
   type BillItem,
 } from "./billing";
+import {
+  MAX_MENU_ITEMS,
+  MAX_MENU_READS_PER_TABLE,
+  MenuValidationError,
+  describeAiFailure,
+  planLinkedItemUpdate,
+  sanitizeMenuItems,
+  sanitizeMenuName,
+} from "./menu";
 
 setGlobalOptions({
   region: "southamerica-east1",
@@ -533,3 +543,250 @@ export const reopenParticipation = onCall(async (request) => {
     logger.info("Participação reaberta", { tableId, uid });
   });
 });
+
+// ─── Cardápio ────────────────────────────────────────────────────────────────
+
+function requireUid(request: { auth?: { uid: string } | null }, message: string): string {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", message);
+  }
+  return uid;
+}
+
+function requireTableId(data: unknown): string {
+  const tableId = String((data as { tableId?: unknown } | null)?.tableId ?? "");
+  if (!tableId) {
+    throw new HttpsError("invalid-argument", "tableId é obrigatório.");
+  }
+  return tableId;
+}
+
+/** Só o admin, com a mesa aberta, mexe na origem do cardápio (leitura por IA e gravação). */
+async function assertMenuAdmin(tableId: string, uid: string): Promise<void> {
+  const tableSnap = await db.doc(`tables/${tableId}`).get();
+  if (!tableSnap.exists || tableSnap.get("status") === "encerrada") {
+    throw new HttpsError("not-found", "Mesa não encontrada.");
+  }
+  if (tableSnap.get("adminUid") !== uid) {
+    throw new HttpsError("permission-denied", "Só o admin da mesa pode adicionar o cardápio.");
+  }
+}
+
+/**
+ * Reserva uma leitura na cota da mesa (`aiQuota/{tableId}`, só Admin SDK).
+ * A cota grátis do OpenRouter é da conta inteira — sem isso, uma mesa só
+ * esgotaria as leituras do dia de todo mundo.
+ */
+async function reserveMenuRead(tableId: string): Promise<void> {
+  const quotaRef = db.doc(`aiQuota/${tableId}`);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(quotaRef);
+    const used = Number(snap.get("menuReads") ?? 0);
+    if (used >= MAX_MENU_READS_PER_TABLE) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Esta mesa já usou todas as leituras de cardápio. Adicione os itens manualmente.",
+      );
+    }
+    tx.set(quotaRef, { menuReads: used + 1, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  });
+}
+
+/** Devolve a leitura quando a IA nem chegou a ser chamada (ex.: foto inválida). */
+async function releaseMenuRead(tableId: string): Promise<void> {
+  await db.doc(`aiQuota/${tableId}`).update({ menuReads: FieldValue.increment(-1) });
+}
+
+/** Consumo de cada chamada à IA em `aiUsage` (só Admin SDK) — custo, tokens, latência. */
+function firestoreUsageSink(tableId: string, uid: string): UsageSink {
+  return {
+    record: async (report) => {
+      await db.collection("aiUsage").add({
+        ...report,
+        tableId,
+        uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    },
+  };
+}
+
+/**
+ * Lê fotos do cardápio com IA e devolve os itens SEM salvar: o admin revisa e
+ * corrige no app, e só então chama `saveMenu`. Preço lido errado vira cobrança
+ * errada, por isso nada vai direto para o Firestore.
+ */
+export const readMenu = onCall(
+  { secrets: aiSecrets(), timeoutSeconds: 120, memory: "512MiB" },
+  async (request) => {
+    const uid = requireUid(request, "Faça login para ler o cardápio.");
+    const tableId = requireTableId(request.data);
+    await assertMenuAdmin(tableId, uid);
+    await reserveMenuRead(tableId);
+
+    try {
+      const reader = MenuReaderClient.create({ usageSink: firestoreUsageSink(tableId, uid) });
+      const { menuName, items, discarded } = await reader.readMenu(request.data?.images);
+
+      logger.info("Cardápio lido", { tableId, items: items.length, discarded, profile: reader.profileName });
+      return { menuName, items, discarded };
+    } catch (error) {
+      if (!(error instanceof AiError)) {
+        throw error;
+      }
+      if (!error.usage) {
+        await releaseMenuRead(tableId);
+      }
+
+      logger.warn("Falha na leitura do cardápio", { tableId, code: error.code, message: error.message });
+      const failure = describeAiFailure(error.code);
+      throw new HttpsError(failure.status, failure.message ?? error.message);
+    }
+  },
+);
+
+/**
+ * Grava o cardápio revisado pelo admin. Acrescenta ao que já existe (ex.:
+ * segunda página fotografada depois), mantendo a ordem em `position`. Nunca
+ * apaga itens: itens da comanda apontam para eles via `menuItemId`.
+ */
+export const saveMenu = onCall(async (request) => {
+  const uid = requireUid(request, "Faça login para salvar o cardápio.");
+  const tableId = requireTableId(request.data);
+  await assertMenuAdmin(tableId, uid);
+
+  let items;
+  try {
+    items = sanitizeMenuItems(request.data?.items);
+  } catch (error) {
+    if (error instanceof MenuValidationError) {
+      throw new HttpsError("invalid-argument", error.message);
+    }
+    throw error;
+  }
+  const menuName = sanitizeMenuName(request.data?.menuName);
+
+  const menuRef = db.collection(`tables/${tableId}/menuItems`);
+  const existing = (await menuRef.count().get()).data().count;
+  if (existing + items.length > MAX_MENU_ITEMS) {
+    throw new HttpsError(
+      "invalid-argument",
+      `O cardápio pode ter no máximo ${MAX_MENU_ITEMS} itens (já tem ${existing}).`,
+    );
+  }
+
+  const now = FieldValue.serverTimestamp();
+  const batch = db.batch();
+  items.forEach((item, index) => {
+    batch.set(menuRef.doc(), {
+      ...item,
+      position: existing + index,
+      createdAt: now,
+      createdBy: uid,
+      updatedAt: now,
+      updatedBy: uid,
+    });
+  });
+  if (menuName) {
+    batch.update(db.doc(`tables/${tableId}`), { menuName, updatedAt: now });
+  }
+  await batch.commit();
+
+  logger.info("Cardápio salvo", { tableId, saved: items.length, total: existing + items.length });
+  return { saved: items.length };
+});
+
+/**
+ * Item do cardápio editado → os itens da comanda ligados a ele acompanham o
+ * nome e o preço (unitário × quantidade), exceto os que já entraram numa conta
+ * paga. Mudança de preço grava `lastChange` "menu-price", que vira o aviso
+ * "o preço do item X foi mudado por Fulano para R$ Y" para quem está no item.
+ * A conta de cada um é recalculada pelo `onItemWrite`, reagindo a esta escrita.
+ */
+async function propagateMenuItemChange(tableId: string, menuItemId: string): Promise<void> {
+  const tableRef = db.doc(`tables/${tableId}`);
+  const menuItemRef = db.doc(`tables/${tableId}/menuItems/${menuItemId}`);
+  const linkedQuery = db.collection(`tables/${tableId}/items`).where("menuItemId", "==", menuItemId);
+
+  await db.runTransaction(async (tx) => {
+    const [tableSnap, menuSnap, linkedSnap] = await Promise.all([
+      tx.get(tableRef),
+      tx.get(menuItemRef),
+      tx.get(linkedQuery),
+    ]);
+
+    if (!tableSnap.exists || !menuSnap.exists) {
+      return;
+    }
+
+    const menu = { name: String(menuSnap.get("name") ?? ""), price: Number(menuSnap.get("price") ?? 0) };
+    const byUid = String(menuSnap.get("updatedBy") ?? "");
+    const paidUids: string[] = tableSnap.get("paidUids") ?? [];
+
+    let updated = 0;
+    linkedSnap.docs.forEach((itemSnap) => {
+      const plan = planLinkedItemUpdate(
+        {
+          name: String(itemSnap.get("name") ?? ""),
+          price: Number(itemSnap.get("price") ?? 0),
+          quantity: Number(itemSnap.get("quantity") ?? 1) || 1,
+          settled: itemSnap.get("settled") === true,
+          consumerUids: itemSnap.get("consumerUids") ?? [],
+        },
+        menu,
+        paidUids,
+      );
+      if (!plan) {
+        return;
+      }
+
+      const changes: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+      if (plan.name !== undefined) {
+        changes.name = plan.name;
+      }
+      if (plan.price !== undefined) {
+        changes.price = plan.price;
+        changes.lastChange = {
+          type: "menu-price",
+          byUid,
+          targetUid: null,
+          at: FieldValue.serverTimestamp(),
+          oldPrice: plan.oldUnitPrice ?? null,
+          newPrice: menu.price,
+        };
+      }
+
+      tx.update(itemSnap.ref, changes);
+      updated += 1;
+    });
+
+    logger.info("Itens da comanda atualizados pelo cardápio", { tableId, menuItemId, updated });
+  });
+}
+
+export const onMenuItemWrite = onDocumentWritten(
+  { document: "tables/{tableId}/menuItems/{menuItemId}", retry: true },
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+
+    // Criação vem do saveMenu (ninguém aponta para o item ainda) e exclusão
+    // não tem caminho pelo cliente: só edição interessa.
+    if (!before?.exists || !after?.exists) {
+      return;
+    }
+
+    const priceChanged = before.get("price") !== after.get("price");
+    const nameChanged = before.get("name") !== after.get("name");
+    if (!priceChanged && !nameChanged) {
+      return;
+    }
+
+    if (tooOldToRetry(event.time, event.params.tableId)) {
+      return;
+    }
+
+    await propagateMenuItemChange(event.params.tableId, event.params.menuItemId);
+  },
+);

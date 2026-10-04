@@ -10,6 +10,8 @@ export type Table = {
   tipPercent: number;
   couvertSuggested: number;
   status: TableStatus;
+  /** Nome do cardápio (ver `tables/{id}/menuItems`). Ausente enquanto não houver cardápio. */
+  menuName?: string | null;
   createdAt: Date;
   updatedAt: Date;
 };

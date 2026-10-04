@@ -53,6 +53,22 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
     }
 
+    function isAdminOrParticipant(tableId) {
+      return tableAdminUid(tableId) == request.auth.uid || isParticipant(tableId);
+    }
+
+    // Item da comanda que veio do cardápio: nome e preço têm de ser os do
+    // cardápio (preço = unitário × quantidade, a mesma conta do cliente e da
+    // Cloud Function), senão bastaria apontar para o cardápio e gravar outro valor.
+    function matchesMenuItem(tableId, data) {
+      let menuItem = get(
+        /databases/$(database)/documents/tables/$(tableId)/menuItems/$(data.menuItemId)
+      ).data;
+      return data.menuItemId is string
+             && data.name == menuItem.name
+             && data.price == menuItem.price * data.get('quantity', 1);
+    }
+
     // Coleção de usuários: cada doc é privado do dono.
     match /users/{userId} {
 
@@ -126,7 +142,8 @@ service cloud.firestore {
                     && request.resource.data.couvertSuggested >= 0
                     && request.resource.data.paidUids == [];
 
-      // Atualização: só o admin, e só a config da mesa.
+      // Atualização: o admin edita a config da mesa; participantes, só o nome
+      // do cardápio.
       allow update: if isSignedIn()
                     && (
                       // (a) Admin edita a config da mesa. Não mexe em paidUids.
@@ -144,6 +161,17 @@ service cloud.firestore {
                       // `registerPayment` e sai em `reopenParticipation`, ambas
                       // Cloud Functions com Admin SDK. Deixar o cliente mexer
                       // aqui é deixá-lo se declarar pago.
+
+                      // (b) Participante renomeia o cardápio. Só o nome: o
+                      // resto da mesa continua sendo do admin.
+                      || (
+                        isParticipant(tableId)
+                        && resource.data.status == 'aberta'
+                        && onlyChanged(['menuName', 'updatedAt'])
+                        && request.resource.data.menuName is string
+                        && request.resource.data.menuName.size() > 0
+                        && request.resource.data.menuName.size() <= 80
+                      )
                     );
 
       match /participants/{participantId} {
@@ -271,7 +299,9 @@ service cloud.firestore {
                           || request.resource.data.icon == null
                           || request.resource.data.icon is string)
                       && (!('lastChange' in request.resource.data)
-                          || request.resource.data.lastChange == null);
+                          || request.resource.data.lastChange == null)
+                      && (request.resource.data.get('menuItemId', null) == null
+                          || matchesMenuItem(tableId, request.resource.data));
 
         // (1) Editar nome/valor/quantidade/ícone — qualquer consumidor aceito,
         //     vale na hora, sem aprovação de ninguém.
@@ -281,9 +311,14 @@ service cloud.firestore {
         //     (`isSettled`) e nenhum item que alguém quitado divide pode ser
         //     alterado (`freeOfPaid`). `settled` fica de fora do `onlyChanged`,
         //     o que já o torna imutável pelo cliente.
+        //
+        //     Item que veio do cardápio não se edita aqui: nome e preço seguem o
+        //     cardápio (Cloud Function `onMenuItemWrite`). `menuItemId` fica fora
+        //     do `onlyChanged` de todos os ramos, então também é imutável.
         allow update: if isSignedIn()
                       && request.auth.uid in resource.data.consumerUids
                       && !isSettled()
+                      && resource.data.get('menuItemId', null) == null
                       && freeOfPaid(tableId, resource.data.get('consumerUids', []))
                       && onlyChanged(['name', 'price', 'quantity', 'icon', 'updatedAt', 'lastChange'])
                       && request.resource.data.name is string
@@ -386,6 +421,35 @@ service cloud.firestore {
         // (Admin SDK, ignora rules). Substitui o `allow delete` do dono que
         // existia na main — aqui o item não tem dono com privilégio, some
         // sozinho quando a última pessoa sai dele.
+      }
+
+      // Cardápio da mesa. Criação só pela Cloud Function `saveMenu` (admin,
+      // depois de revisar a leitura da IA). Sem exclusão: itens da comanda
+      // apontam para estes docs via `menuItemId`.
+      match /menuItems/{menuItemId} {
+
+        allow read: if isSignedIn() && isAdminOrParticipant(tableId);
+
+        // Admin e participantes corrigem nome, seção e preço. Mudar o preço
+        // propaga para a comanda (`onMenuItemWrite`), que avisa quem está no
+        // item usando `updatedBy` — por isso ele precisa ser quem editou.
+        allow update: if isSignedIn()
+                      && isAdminOrParticipant(tableId)
+                      && tableStatus(tableId) == 'aberta'
+                      && onlyChanged(['name', 'section', 'price', 'updatedAt', 'updatedBy'])
+                      && request.resource.data.name is string
+                      && request.resource.data.name.size() > 0
+                      && request.resource.data.name.size() <= 80
+                      && (request.resource.data.section == null
+                          || (request.resource.data.section is string
+                              && request.resource.data.section.size() <= 40))
+                      && request.resource.data.price is number
+                      && request.resource.data.price > 0
+                      && request.resource.data.price <= 10000
+                      && request.resource.data.updatedBy == request.auth.uid
+                      && request.resource.data.updatedAt == request.time;
+
+        allow create, delete: if false;
       }
     }
 

@@ -68,6 +68,7 @@ function normalizeItem(snapshotId: string, data: Record<string, unknown>): Table
         ?.toMillis?.() ?? null,
     updatedAt: data.updatedAt,
     lastChange: normalizeLastChange(data.lastChange),
+    menuItemId: data.menuItemId ? String(data.menuItemId) : null,
   };
 }
 
@@ -84,7 +85,7 @@ function normalizeLastChange(raw: unknown): ItemLastChange | null {
   }
 
   const data = raw as Record<string, unknown>;
-  const validTypes = ["update", "invite", "accept", "decline", "leave", "remove"];
+  const validTypes = ["update", "invite", "accept", "decline", "leave", "remove", "menu-price"];
   const type = validTypes.includes(data.type as string)
     ? (data.type as ItemLastChange["type"])
     : null;
@@ -98,6 +99,8 @@ function normalizeLastChange(raw: unknown): ItemLastChange | null {
     byUid: String(data.byUid),
     targetUid: data.targetUid ? String(data.targetUid) : null,
     at: data.at,
+    oldPrice: typeof data.oldPrice === "number" ? data.oldPrice : null,
+    newPrice: typeof data.newPrice === "number" ? data.newPrice : null,
   };
 }
 
@@ -127,6 +130,9 @@ function toItemWriteError(error: unknown, fallback: string): Error {
 
 export const SETTLED_MESSAGE =
   "Este item já entrou em uma conta paga e não pode mais ser alterado.";
+
+export const MENU_ITEM_LOCKED_MESSAGE =
+  "Este item veio do cardápio: nome e valor só mudam editando o cardápio.";
 
 export const PAID_MESSAGE =
   "Sua conta já foi paga. Para consumir mais, saia da mesa e entre novamente.";
@@ -187,6 +193,7 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
       ownerUid: current.uid,
       settled: false,
       lastChange: null,
+      menuItemId: input.menuItemId ?? null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -197,7 +204,10 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
   }
 }
 
-/** Edita nome/valor/quantidade/ícone. Vale na hora, sem aprovação de ninguém. */
+/**
+ * Edita nome/valor/quantidade/ícone. Vale na hora, sem aprovação de ninguém.
+ * Itens vindos do cardápio não passam por aqui: seguem o cardápio.
+ */
 export async function updateItemDetails(
   tableId: string,
   itemId: string,
@@ -214,6 +224,10 @@ export async function updateItemDetails(
   const item = snapshot.data() as TableItem;
   if (!item.consumerUids.includes(current.uid)) {
     throw new Error("Você não participa deste item.");
+  }
+
+  if (item.menuItemId) {
+    throw new Error(MENU_ITEM_LOCKED_MESSAGE);
   }
 
   const name = input.name.trim();

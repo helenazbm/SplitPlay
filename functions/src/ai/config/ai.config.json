@@ -20,6 +20,7 @@
     "free-gemma26": {
       "provider": "openrouter",
       "model": "google/gemma-4-26b-a4b-it:free",
+      "fallbackModels": ["dots-studio/dots-3-note-preview:free"],
       "structuredOutputs": false,
       "pricingUsdPerMillion": { "input": 0, "output": 0 }
     },

@@ -76,6 +76,8 @@ const status = await AiAccountService.create().getStatus();
 
 Para trocar o modelo, edite `model` e `pricingUsdPerMillion` no JSON (os preços estão em openrouter.ai/models). Nenhum código muda.
 
+`fallbackModels` (opcional) é uma lista de modelos reserva, em ordem: quando o `model` recusa (ex.: modelo `:free` sobrecarregado, erro 429), o OpenRouter tenta o próximo na mesma chamada. Os reservas precisam aceitar imagem. O `UsageReport` registra o modelo que respondeu de fato.
+
 ### Passo a passo
 
 1. Crie uma chave em openrouter.ai/keys. Para o modo pago, compre créditos e defina um limite na chave.

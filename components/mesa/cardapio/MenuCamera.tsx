@@ -120,7 +120,7 @@ export default function MenuCamera({ maxPhotos, reading, error, onCancel, onSubm
       className="sp-fade-in fixed inset-0 z-[60] mx-auto flex w-full max-w-[420px] flex-col bg-[rgba(27,31,34,0.8)] text-white"
       role="dialog"
       aria-modal="true"
-      aria-label="Fotografar cardápio"
+      aria-label="Fotografar ou enviar cardápio"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
       <header className="relative shrink-0" style={{ padding: "40px 31px 0" }}>
@@ -128,7 +128,7 @@ export default function MenuCamera({ maxPhotos, reading, error, onCancel, onSubm
           Cardápio
         </h2>
         <p className="font-poppins font-thin" style={{ fontSize: "15px", maxWidth: "300px", marginTop: "6px" }}>
-          Posicione o cardápio na câmera para a leitura correta dos itens.
+          Posicione o cardápio na câmera ou envie fotos que você já tem.
         </p>
         <button
           type="button"
@@ -236,7 +236,7 @@ export default function MenuCamera({ maxPhotos, reading, error, onCancel, onSubm
         ) : null}
 
         <div className="flex items-center" style={{ gap: "28px" }}>
-          <span style={{ width: "44px" }} />
+          <span style={{ width: "56px" }} />
           <button
             type="button"
             onClick={capture}
@@ -251,16 +251,21 @@ export default function MenuCamera({ maxPhotos, reading, error, onCancel, onSubm
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={full || reading}
-            aria-label="Escolher fotos da galeria"
-            title="Escolher da galeria"
-            className="flex items-center justify-center rounded-full bg-white/10 transition hover:bg-white/20 disabled:opacity-40"
-            style={{ height: "44px", width: "44px" }}
+            title="Enviar fotos da galeria"
+            className="font-poppins flex flex-col items-center transition disabled:opacity-40"
+            style={{ width: "56px", gap: "4px", fontSize: "11px" }}
           >
-            <i aria-hidden="true" className="pi pi-images" />
+            <span
+              className="flex items-center justify-center rounded-full bg-white/10 transition hover:bg-white/20"
+              style={{ height: "44px", width: "44px" }}
+            >
+              <i aria-hidden="true" className="pi pi-upload" />
+            </span>
+            Enviar
           </button>
         </div>
         <p className="font-poppins font-thin" style={{ fontSize: "12px" }}>
-          {full ? `Limite de ${maxPhotos} fotos por leitura.` : `Até ${maxPhotos} fotos, uma por página.`}
+          {full ? `Limite de ${maxPhotos} fotos por leitura.` : `Até ${maxPhotos} fotos (câmera ou enviadas), uma por página.`}
         </p>
       </footer>
 

@@ -53,6 +53,33 @@ describe("OpenRouterProvider.complete", () => {
     });
   });
 
+  test("com modelos reserva, manda a lista em `models` e informa quem respondeu", async () => {
+    const fetchFn = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { ...OK_BODY, model: "reserva/b:free" }));
+    const provider = new OpenRouterProvider("chave", "principal/a:free", false, fetchFn, [
+      "reserva/b:free",
+    ]);
+
+    const completion = await provider.complete(request());
+
+    const body = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(body.models).toEqual(["principal/a:free", "reserva/b:free"]);
+    expect(body.model).toBeUndefined();
+    expect(completion.model).toBe("reserva/b:free");
+  });
+
+  test("sem modelos reserva, manda só `model`", async () => {
+    const fetchFn = jest.fn().mockResolvedValue(jsonResponse(200, OK_BODY));
+    const provider = new OpenRouterProvider("chave", "x:free", false, fetchFn);
+
+    await provider.complete(request());
+
+    const body = JSON.parse(fetchFn.mock.calls[0][1].body);
+    expect(body.model).toBe("x:free");
+    expect(body.models).toBeUndefined();
+  });
+
   test("sem structured outputs (modelo :free) não envia response_format", async () => {
     const fetchFn = jest.fn().mockResolvedValue(jsonResponse(200, OK_BODY));
     const provider = new OpenRouterProvider("chave", "x:free", false, fetchFn);

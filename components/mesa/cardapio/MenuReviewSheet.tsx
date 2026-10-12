@@ -85,7 +85,7 @@ export default function MenuReviewSheet({
           ) : null}
           <SheetDashedButton onClick={onRetake} disabled={saving}>
             <i aria-hidden="true" className="pi pi-camera" />
-            Tirar outra foto
+            Ler outra foto
           </SheetDashedButton>
           <SheetPrimaryButton
             dataCy="cardapio-salvar"

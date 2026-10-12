@@ -1,5 +1,5 @@
 {
-  "activeProfile": "free",
+  "activeProfile": "free-gemma26",
   "referenceProfile": "paid",
   "profiles": {
     "mock": {
@@ -15,6 +15,12 @@
       "provider": "openrouter",
       "model": "qwen/qwen3.8-27b:free",
       "structuredOutputs": true,
+      "pricingUsdPerMillion": { "input": 0, "output": 0 }
+    },
+    "free-gemma26": {
+      "provider": "openrouter",
+      "model": "google/gemma-4-26b-a4b-it:free",
+      "structuredOutputs": false,
       "pricingUsdPerMillion": { "input": 0, "output": 0 }
     },
     "paid": {

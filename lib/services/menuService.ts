@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
@@ -10,7 +11,8 @@ import {
 import { httpsCallable } from "firebase/functions";
 
 import { auth, db, functions } from "@/lib/firebase";
-import { createTableItem } from "@/lib/services/itemService";
+import { SETTLED_MESSAGE, createTableItem } from "@/lib/services/itemService";
+import type { ItemLastChange, TableItem } from "@/lib/types/item";
 import type {
   MenuDraft,
   MenuImageInput,
@@ -66,6 +68,7 @@ function normalizeMenuItem(id: string, data: Record<string, unknown>): MenuItemW
     name: String(data.name ?? ""),
     price: Number(data.price ?? 0),
     position: Number(data.position ?? 0),
+    hidden: data.hidden === true,
     updatedBy: String(data.updatedBy ?? ""),
     updatedAt: data.updatedAt,
   };
@@ -148,7 +151,7 @@ export async function saveMenu(tableId: string, draft: MenuDraft): Promise<numbe
   return data.saved;
 }
 
-/** Cardápio da mesa na ordem em que foi lido. */
+/** Cardápio da mesa na ordem em que foi lido, sem os itens excluídos. */
 export function subscribeToMenu(
   tableId: string,
   onChange: (items: MenuItemWithId[]) => void,
@@ -160,9 +163,11 @@ export function subscribeToMenu(
     menuQuery,
     (snapshot) => {
       onChange(
-        snapshot.docs.map((menuSnapshot) =>
-          normalizeMenuItem(menuSnapshot.id, menuSnapshot.data() as Record<string, unknown>),
-        ),
+        snapshot.docs
+          .map((menuSnapshot) =>
+            normalizeMenuItem(menuSnapshot.id, menuSnapshot.data() as Record<string, unknown>),
+          )
+          .filter((item) => !item.hidden),
       );
     },
     (error) => {
@@ -208,6 +213,28 @@ export async function updateMenuItem(
   }
 }
 
+/**
+ * Tira um item do cardápio (admin ou participante). Não apaga o doc: itens da
+ * comanda apontam para ele via `menuItemId`, então ele só fica oculto e as
+ * rules param de aceitar novos pedidos dele.
+ */
+export async function hideMenuItem(tableId: string, menuItemId: string): Promise<void> {
+  const current = requireCurrentUser();
+
+  try {
+    await updateDoc(doc(db, "tables", tableId, "menuItems", menuItemId), {
+      hidden: true,
+      updatedBy: current.uid,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    if (isPermissionDenied(error)) {
+      throw new Error("Não foi possível excluir o item: a mesa pode ter sido encerrada.");
+    }
+    throw error;
+  }
+}
+
 /** Renomeia o cardápio (admin ou participante). */
 export async function updateMenuName(tableId: string, menuName: string): Promise<void> {
   requireCurrentUser();
@@ -243,4 +270,68 @@ export async function addMenuItemToComanda(
     icon: options.icon ?? null,
     menuItemId: menuItem.id,
   });
+}
+
+export const MENU_QUANTITY_DENIED_MESSAGE =
+  "Não foi possível mudar a quantidade: alguém que divide este item já pagou ou o preço do cardápio mudou. Confira e tente de novo.";
+
+/**
+ * Muda a quantidade de um item da comanda que veio do cardápio. O preço é
+ * recalculado com o unitário atual do cardápio; nome e preço unitário seguem
+ * travados (só mudam pelo cardápio). As rules conferem a conta.
+ */
+export async function updateMenuItemQuantity(tableId: string, itemId: string, quantity: number) {
+  const current = requireCurrentUser();
+  const nextQuantity = Math.trunc(quantity);
+  if (!Number.isFinite(nextQuantity) || nextQuantity < 1) {
+    throw new Error("Informe uma quantidade válida.");
+  }
+
+  const itemRef = doc(db, "tables", tableId, "items", itemId);
+  const itemSnapshot = await getDoc(itemRef);
+  if (!itemSnapshot.exists()) {
+    throw new Error("Item não encontrado.");
+  }
+
+  const item = itemSnapshot.data() as TableItem;
+  if (!item.consumerUids.includes(current.uid)) {
+    throw new Error("Você não participa deste item.");
+  }
+  if (!item.menuItemId) {
+    throw new Error("Este item não veio do cardápio.");
+  }
+  if (item.settled) {
+    throw new Error(SETTLED_MESSAGE);
+  }
+
+  const menuSnapshot = await getDoc(doc(db, "tables", tableId, "menuItems", item.menuItemId));
+  const menuItem = menuSnapshot.exists()
+    ? normalizeMenuItem(menuSnapshot.id, menuSnapshot.data() as Record<string, unknown>)
+    : null;
+  if (!menuItem || menuItem.hidden) {
+    throw new Error("Este item saiu do cardápio e não pode mais ser alterado.");
+  }
+
+  const lastChange: ItemLastChange = {
+    type: "update",
+    byUid: current.uid,
+    targetUid: null,
+    at: serverTimestamp(),
+  };
+
+  try {
+    await updateDoc(itemRef, {
+      quantity: nextQuantity,
+      price: menuLinePrice(menuItem.price, nextQuantity),
+      lastChange,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    if (isPermissionDenied(error)) {
+      // Recusa sem item liquidado: alguém da divisão já pagou ou o preço do
+      // cardápio mudou no meio do caminho.
+      throw new Error(MENU_QUANTITY_DENIED_MESSAGE);
+    }
+    throw error;
+  }
 }

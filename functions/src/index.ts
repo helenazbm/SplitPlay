@@ -639,7 +639,7 @@ export const readMenu = onCall(
         await releaseMenuRead(tableId);
       }
 
-      logger.warn("Falha na leitura do cardápio", { tableId, code: error.code, message: error.message });
+      logger.warn("Falha na leitura do cardápio", { tableId, code: error.code, detail: error.message });
       const failure = describeAiFailure(error.code);
       throw new HttpsError(failure.status, failure.message ?? error.message);
     }

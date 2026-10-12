@@ -9,6 +9,7 @@ import MesaParticipantesTab from "@/components/mesa/tabs/MesaParticipantesTab";
 import MesaPedidosTab from "@/components/mesa/tabs/MesaPedidosTab";
 import { useAuth } from "@/lib/contexts/AuthContext";
 import { subscribeToTableItems } from "@/lib/services/itemService";
+import { subscribeToMenu } from "@/lib/services/menuService";
 import {
   closeTable,
   leaveTable,
@@ -19,6 +20,7 @@ import {
   updateTableSettings,
 } from "@/lib/services/tableService";
 import type { TableItemWithId } from "@/lib/types/item";
+import type { MenuItemWithId } from "@/lib/types/menu";
 import type { Participant } from "@/lib/types/participant";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -38,6 +40,8 @@ export default function MesaPainelPage() {
   const [items, setItems] = useState<TableItemWithId[]>([]);
   const [itemsLoaded, setItemsLoaded] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
+  const [menuItems, setMenuItems] = useState<MenuItemWithId[]>([]);
+  const [menuName, setMenuName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
@@ -95,6 +99,7 @@ export default function MesaPainelPage() {
         setAdminUid(table.adminUid);
         setCouvert(table.couvertSuggested ?? 0);
         setTipPercent(table.tipPercent ?? 10);
+        setMenuName(table.menuName ?? null);
         setLoading(false);
 
         if (table.status === "encerrada") {
@@ -139,11 +144,23 @@ export default function MesaPainelPage() {
       },
     );
 
+    // Cardápio é opcional: se falhar, a mesa segue funcionando sem ele.
+    const unsubscribeMenu = subscribeToMenu(
+      tableId,
+      (list) => {
+        if (!cancelled) {
+          setMenuItems(list);
+        }
+      },
+      (menuError) => console.error("[cardapio] falha ao assinar o cardápio:", menuError),
+    );
+
     return () => {
       cancelled = true;
       unsubscribeTable();
       unsubscribeParticipants();
       unsubscribeItems();
+      unsubscribeMenu();
     };
   }, [authLoading, user, router, tableId]);
 
@@ -306,6 +323,9 @@ export default function MesaPainelPage() {
               items={items}
               participants={participants}
               loadError={itemsError}
+              menuItems={menuItems}
+              menuName={menuName}
+              isAdmin={isAdmin}
             />
           ) : null}
           {activeTab === "mesa" ? (

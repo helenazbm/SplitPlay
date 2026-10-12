@@ -11,11 +11,14 @@ import {
   SETTLED_MESSAGE,
   updateItemDetails,
 } from "@/lib/services/itemService";
+import { updateMenuItemQuantity } from "@/lib/services/menuService";
 import { reopenParticipation } from "@/lib/services/tableService";
 import type { ItemLastChange, TableItemWithId } from "@/lib/types/item";
+import type { MenuItemWithId } from "@/lib/types/menu";
 import type { Participant } from "@/lib/types/participant";
 import ComandaResumo from "@/components/mesa/ComandaResumo";
 import CreateItemModal from "@/components/mesa/CreateItemModal";
+import CardapioSheet from "@/components/mesa/cardapio/CardapioSheet";
 import {
   centsToReais,
   isItemInCurrentRound,
@@ -44,6 +47,11 @@ type MesaPedidosTabProps = {
   participants: Participant[];
   /** Falha ao carregar os itens, vinda do listener da página. */
   loadError?: string | null;
+  /** Cardápio da mesa (sem os itens excluídos), também assinado pela página. */
+  menuItems?: MenuItemWithId[];
+  menuName?: string | null;
+  /** Admin fotografa o cardápio; os demais só pedem e editam. */
+  isAdmin?: boolean;
 };
 
 type ParticipantOption = {
@@ -95,6 +103,9 @@ export default function MesaPedidosTab({
   items,
   participants,
   loadError = null,
+  menuItems = [],
+  menuName = null,
+  isAdmin = false,
 }: MesaPedidosTabProps) {
   const params = useParams<{ tableId: string }>();
   const tableId = params.tableId;
@@ -108,6 +119,7 @@ export default function MesaPedidosTab({
   );
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [reopening, setReopening] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [dismissedLoadError, setDismissedLoadError] = useState<string | null>(
     null,
   );
@@ -378,26 +390,48 @@ export default function MesaPedidosTab({
   }
 
 
-  async function handleOpenCreate() {
+  /**
+   * Quem já pagou e quer pedir mais reabre a participação primeiro (nova
+   * rodada). Devolve false se não deu — o erro já fica no banner.
+   */
+  async function reopenIfPaid(): Promise<boolean> {
     setError(null);
 
-    if (currentParticipantPaid) {
-      setReopening(true);
-      try {
-        await reopenParticipation(tableId);
-      } catch (nextError) {
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : "Não foi possível reabrir sua participação.",
-        );
-        return;
-      } finally {
-        setReopening(false);
-      }
+    if (!currentParticipantPaid) {
+      return true;
     }
 
-    onOpenCreate();
+    setReopening(true);
+    try {
+      await reopenParticipation(tableId);
+      return true;
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Não foi possível reabrir sua participação.",
+      );
+      return false;
+    } finally {
+      setReopening(false);
+    }
+  }
+
+  async function handleOpenCreate() {
+    if (await reopenIfPaid()) {
+      onOpenCreate();
+    }
+  }
+
+  // Com cardápio salvo, "Item +" abre o cardápio (que tem "Não achou? Adicionar
+  // item manual"). Sem cardápio, abre o item manual e o admin ganha "Cardápio +"
+  // para fotografar.
+  const hasMenu = menuItems.length > 0;
+
+  async function handleOpenMenu() {
+    if (await reopenIfPaid()) {
+      setIsMenuOpen(true);
+    }
   }
 
   async function handleUpdateItem(data: {
@@ -414,6 +448,12 @@ export default function MesaPedidosTab({
     setError(null);
 
     try {
+      if (editingItem?.menuItemId) {
+        // Item do cardápio: só a quantidade muda; o preço segue o cardápio.
+        await updateMenuItemQuantity(tableId, editingItemId, data.quantity);
+        setEditingItemId(null);
+        return;
+      }
       await updateItemDetails(tableId, editingItemId, {
         name: data.name,
         price: data.price,
@@ -621,23 +661,45 @@ export default function MesaPedidosTab({
           Itens Pedidos
         </h2>
 
-        <button
-          data-cy="additem"
-          type="button"
-          onClick={() => void handleOpenCreate()}
-          disabled={reopening}
-          aria-label="Adicionar item"
-          className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#5B9A7A] transition hover:bg-[#bbe0cc] active:scale-95 disabled:opacity-50"
-          style={{
-            height: "2rem",
-            paddingInline: "var(--spacing-fluid-3)",
-            fontSize: "var(--text-fluid-xs)",
-            gap: "0.35rem",
-          }}
-        >
-          Item
-          <i aria-hidden="true" className="pi pi-plus" />
-        </button>
+        <div className="flex shrink-0 items-center" style={{ gap: "0.4rem" }}>
+          <button
+            data-cy="additem"
+            type="button"
+            onClick={() => void (hasMenu ? handleOpenMenu() : handleOpenCreate())}
+            disabled={reopening}
+            aria-label={hasMenu ? "Adicionar item do cardápio" : "Adicionar item"}
+            className="font-poppins flex shrink-0 items-center rounded-[30px] border-[0.5px] border-[#5B9A7A] bg-white font-semibold text-[#5B9A7A] transition hover:bg-[#eaf6ef] active:scale-95 disabled:opacity-50"
+            style={{
+              height: "2rem",
+              paddingInline: "var(--spacing-fluid-3)",
+              fontSize: "var(--text-fluid-xs)",
+              gap: "0.35rem",
+            }}
+          >
+            Item
+            <i aria-hidden="true" className="pi pi-plus" />
+          </button>
+
+          {!hasMenu && isAdmin ? (
+            <button
+              data-cy="abrircardapio"
+              type="button"
+              onClick={() => void handleOpenMenu()}
+              disabled={reopening}
+              aria-label="Cadastrar cardápio"
+              className="font-poppins flex shrink-0 items-center rounded-[30px] bg-[#CDE9DA] font-semibold text-[#418964] transition hover:bg-[#bbe0cc] active:scale-95 disabled:opacity-50"
+              style={{
+                height: "2rem",
+                paddingInline: "var(--spacing-fluid-3)",
+                fontSize: "var(--text-fluid-xs)",
+                gap: "0.35rem",
+              }}
+            >
+              Cardápio
+              <i aria-hidden="true" className="pi pi-plus" />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {bannerMessage ? (
@@ -1032,11 +1094,34 @@ export default function MesaPedidosTab({
               className="font-poppins text-[#64835b]"
               style={{ fontSize: "var(--text-fluid-sm)" }}
             >
-              Você ainda não tem itens. Toque em “Item +”.
+              {hasMenu
+                ? "Você ainda não tem itens. Toque em “Item +” para pedir do cardápio."
+                : isAdmin
+                  ? "Você ainda não tem itens. Adicione em “Item +” ou cadastre o cardápio em “Cardápio +”."
+                  : "Você ainda não tem itens. Adicione em “Item +”."}
             </p>
           </div>
         ) : null}
       </div>
+
+      {isMenuOpen && user ? (
+        <CardapioSheet
+          tableId={tableId}
+          isAdmin={isAdmin}
+          menuItems={menuItems}
+          menuName={menuName}
+          currentUid={user.uid}
+          shareableParticipants={shareableParticipants.filter(
+            (participant) => participant.uid !== user.uid,
+          )}
+          participantByUid={participantByUid}
+          onClose={() => setIsMenuOpen(false)}
+          onAddManual={() => {
+            setIsMenuOpen(false);
+            onOpenCreate();
+          }}
+        />
+      ) : null}
 
       {isCreateOpen ? (
         <CreateItemModal
@@ -1062,7 +1147,12 @@ export default function MesaPedidosTab({
           onRemoveParticipant={(uid) => void handleRemoveParticipant(editingItem.id, uid)}
           title="Editar Item"
           submitLabel="Salvar"
-          noticeText="Convidar ou remover participantes vale na hora. Nome e valor só mudam ao Salvar."
+          lockDetails={Boolean(editingItem.menuItemId)}
+          noticeText={
+            editingItem.menuItemId
+              ? "Item do cardápio: nome e valor seguem o cardápio. Participantes mudam na hora; a quantidade, ao Salvar."
+              : "Convidar ou remover participantes vale na hora. Nome e valor só mudam ao Salvar."
+          }
           initialName={editingItem.name}
           initialPrice={
             editingItem.quantity > 0

@@ -30,6 +30,7 @@ import { httpsCallable } from "firebase/functions";
 import { MENU_ITEM_LOCKED_MESSAGE, updateItemDetails } from "@/lib/services/itemService";
 import {
   addMenuItemToComanda,
+  hideMenuItem,
   readMenuFromPhotos,
   saveMenu,
   updateMenuItem,
@@ -152,5 +153,25 @@ describe("menuService", () => {
     await expect(
       readMenuFromPhotos("table1", [new Blob(), new Blob(), new Blob(), new Blob()]),
     ).rejects.toThrow("Envie no máximo 3 fotos por vez.");
+  });
+
+  test("hideMenuItem: só marca hidden, sem apagar o doc", async () => {
+    updateDocMock.mockResolvedValueOnce(undefined);
+
+    await hideMenuItem("table1", "menu1");
+
+    expect(updateDocMock).toHaveBeenCalledWith("doc-ref", {
+      hidden: true,
+      updatedBy: "test-user",
+      updatedAt: "SERVER_TIMESTAMP",
+    });
+  });
+
+  test("hideMenuItem: traduz permission-denied", async () => {
+    updateDocMock.mockRejectedValueOnce({ code: "permission-denied" });
+
+    await expect(hideMenuItem("table1", "menu1")).rejects.toThrow(
+      "Não foi possível excluir o item: a mesa pode ter sido encerrada.",
+    );
   });
 });

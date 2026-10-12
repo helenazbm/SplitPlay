@@ -137,6 +137,10 @@ export const MENU_ITEM_LOCKED_MESSAGE =
 export const PAID_MESSAGE =
   "Sua conta já foi paga. Para consumir mais, saia da mesa e entre novamente.";
 
+/** Pedido do cardápio recusado pelas rules: item excluído ou com preço/nome desatualizado. */
+export const MENU_ORDER_DENIED_MESSAGE =
+  "Não foi possível pedir este item: ele mudou ou saiu do cardápio. Confira o cardápio e tente de novo.";
+
 export function subscribeToTableItems(
   tableId: string,
   onChange: (items: TableItemWithId[]) => void,
@@ -200,7 +204,7 @@ export async function createTableItem(tableId: string, input: CreateTableItemInp
 
     return itemRef.id;
   } catch (error) {
-    throw toItemWriteError(error, PAID_MESSAGE);
+    throw toItemWriteError(error, input.menuItemId ? MENU_ORDER_DENIED_MESSAGE : PAID_MESSAGE);
   }
 }
 

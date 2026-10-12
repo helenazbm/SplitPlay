@@ -2,9 +2,10 @@ import type { AiJsonSchema } from "../providers/AiProvider";
 
 export const MENU_SYSTEM_PROMPT = [
   "Você extrai itens de fotos de cardápios de bares e restaurantes brasileiros.",
-  "Responda SOMENTE com JSON no formato pedido, sem texto em volta.",
+  "Responda SOMENTE com UM objeto JSON, sem texto em volta, exatamente neste formato:",
+  '{"menuName": "Bar do Zé", "items": [{"section": "Cervejas", "name": "Long neck", "price": 12.9}]}',
   "Regras:",
-  "- Um objeto por item com preço legível. Ignore itens sem preço ou com preço 'sob consulta'.",
+  "- Dentro de `items`, um objeto por item com preço legível. Ignore itens sem preço ou com preço 'sob consulta'.",
   "- `price` é número em reais com ponto decimal: 'R$ 12,90' vira 12.9.",
   "- Variações com preços diferentes viram itens separados: 'Porção de fritas (meia)' e 'Porção de fritas (inteira)'.",
   "- `section` é o título da seção do cardápio (ex.: 'Cervejas'), ou null se não houver.",

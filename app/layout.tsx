@@ -33,7 +33,7 @@ const bagel = Bagel_Fat_One({
 
 const poppins = Poppins({
   variable: "--font-poppins",
-  weight: ["400", "600", "700", "900"],
+  weight: ["100", "400", "500", "600", "700", "800", "900"],
   subsets: ["latin"],
 });
 

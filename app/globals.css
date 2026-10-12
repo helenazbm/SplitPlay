@@ -96,3 +96,37 @@ body {
     animation: none;
   }
 }
+
+/* Bottom sheet do cardápio: sobe da borda inferior ao abrir. */
+@keyframes splitplay-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes splitplay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sp-sheet-up {
+  animation: splitplay-sheet-up 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sp-fade-in {
+  animation: splitplay-fade-in 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-sheet-up,
+  .sp-fade-in {
+    animation: none;
+  }
+}

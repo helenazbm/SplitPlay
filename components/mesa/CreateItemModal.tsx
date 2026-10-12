@@ -49,6 +49,8 @@ type CreateItemModalProps = {
   initialPendingUids?: string[];
   onInviteParticipant?: (uid: string) => void;
   onRemoveParticipant?: (uid: string) => void;
+  /** Item do cardápio: nome, valor unitário e ícone só leitura; quantidade e participantes mudam. */
+  lockDetails?: boolean;
 };
 
 /**
@@ -75,6 +77,7 @@ export default function CreateItemModal({
   initialPendingUids = [],
   onInviteParticipant,
   onRemoveParticipant,
+  lockDetails = false,
 }: CreateItemModalProps) {
   const isEdit = mode === "edit";
 
@@ -193,11 +196,13 @@ export default function CreateItemModal({
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Ex.: Pizza Marguerita"
-              className="w-full rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 pr-12 text-[#1f2b24] outline-none focus:border-[#418964]"
+              readOnly={lockDetails}
+              className="w-full rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 pr-12 text-[#1f2b24] outline-none focus:border-[#418964] read-only:bg-[#f4f4f4] read-only:text-[#6b6b6b]"
             />
             <button
               type="button"
               onClick={() => setEditingIcon(true)}
+              disabled={lockDetails}
               aria-label="Escolher ícone do item"
               className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-full bg-[#fdf3df] transition hover:bg-[#f8e6c8]"
               style={{ height: "2rem", width: "2rem" }}
@@ -226,12 +231,13 @@ export default function CreateItemModal({
           className="grid gap-1 font-poppins text-[#64835b]"
           style={{ fontSize: "var(--text-fluid-xs)" }}
         >
-          Valor:
+          {lockDetails ? "Valor unitário:" : "Valor:"}
           <MoneyInput
             value={priceValue}
             onChange={(reais) => setPrice(String(reais))}
             placeholder="0,00"
-            className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964]"
+            readOnly={lockDetails}
+            className="rounded-[10px_10px_25px_10px] border border-[#418964]/25 bg-white px-4 py-3 text-[#1f2b24] outline-none focus:border-[#418964] read-only:bg-[#f4f4f4] read-only:text-[#6b6b6b]"
           />
         </label>
 

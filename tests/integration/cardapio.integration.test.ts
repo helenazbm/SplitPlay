@@ -3,11 +3,14 @@ import { addDoc, collection, doc, getDocs, orderBy, query, serverTimestamp, upda
 import { httpsCallable } from "firebase/functions";
 
 import { auth, db, functions } from "@/lib/firebase";
+import { MENU_ORDER_DENIED_MESSAGE } from "@/lib/services/itemService";
 import { registerPayment } from "@/lib/services/paymentService";
 import {
   addMenuItemToComanda,
+  hideMenuItem,
   saveMenu,
   updateMenuItem,
+  updateMenuItemQuantity,
   updateMenuName,
 } from "@/lib/services/menuService";
 import { createTable, joinTable } from "@/lib/services/tableService";
@@ -132,6 +135,36 @@ describe("Integração: Cardápio", () => {
     ).rejects.toMatchObject({ code: "permission-denied" });
   });
 
+  test("participante muda a quantidade do item do cardápio: preço segue o cardápio", async () => {
+    const { guest, tableId, menu } = await tableWithMenuAndGuest("menu4q");
+    const longNeck = menu[0];
+    const itemId = await addMenuItemToComanda(tableId, longNeck, { quantity: 1 });
+
+    await updateMenuItemQuantity(tableId, itemId, 3);
+    const item = await getItemData(tableId, itemId);
+    expect(item?.quantity).toBe(3);
+    expect(item?.price).toBe(12.9 * 3);
+    expect(item?.name).toBe("Long neck");
+    await waitForTotalCents(tableId, guest.uid, 3870);
+
+    const itemRef = doc(db, "tables", tableId, "items", itemId);
+    const lastChange = { type: "update", byUid: guest.uid, targetUid: null, at: serverTimestamp() };
+    // Quantidade com preço que não bate com o cardápio.
+    await expect(
+      updateDoc(itemRef, { quantity: 2, price: 1, lastChange, updatedAt: serverTimestamp() }),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+    // Nome continua travado, mesmo junto com uma quantidade válida.
+    await expect(
+      updateDoc(itemRef, {
+        quantity: 2,
+        price: 12.9 * 2,
+        name: "Outro",
+        lastChange,
+        updatedAt: serverTimestamp(),
+      }),
+    ).rejects.toMatchObject({ code: "permission-denied" });
+  });
+
   test("rules recusam item do cardápio com preço diferente do cardápio", async () => {
     const { guest, tableId, menu } = await tableWithMenuAndGuest("menu5");
 
@@ -211,5 +244,19 @@ describe("Integração: Cardápio", () => {
     await updateMenuName(tableId, "Bar Novo");
 
     expect((await getTableData(tableId))?.menuName).toBe("Bar Novo");
+  });
+
+  test("excluir item do cardápio: some da lista, não pode mais ser pedido e o pedido antigo fica", async () => {
+    const { tableId, menu } = await tableWithMenuAndGuest("menu9");
+    const longNeck = menu[0];
+
+    const itemId = await addMenuItemToComanda(tableId, longNeck);
+    await hideMenuItem(tableId, longNeck.id);
+
+    const hidden = (await getMenuItems(tableId)).find((entry) => entry.id === longNeck.id);
+    expect(hidden?.hidden).toBe(true);
+    expect((await getItemData(tableId, itemId))?.menuItemId).toBe(longNeck.id);
+
+    await expect(addMenuItemToComanda(tableId, longNeck)).rejects.toThrow(MENU_ORDER_DENIED_MESSAGE);
   });
 });

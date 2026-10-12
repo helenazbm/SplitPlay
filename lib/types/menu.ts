@@ -7,6 +7,8 @@ export type MenuItem = {
   price: number;
   /** Ordem em que aparece no cardápio. */
   position: number;
+  /** "Excluído" do cardápio: some da lista e não pode mais ser pedido (itens já pedidos continuam). */
+  hidden: boolean;
   updatedBy: string;
   updatedAt: unknown;
 };

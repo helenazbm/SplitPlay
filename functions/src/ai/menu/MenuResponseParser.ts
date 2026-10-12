@@ -63,16 +63,85 @@ export class MenuResponseParser {
     };
   }
 
-  /** Aceita JSON puro ou dentro de cerca ```json``` (modelos sem JSON mode fazem isso). */
+  /**
+   * Aceita o que modelos sem JSON mode costumam mandar: cerca ```json```, texto
+   * antes/depois, uma lista de itens solta ou um objeto por item em sequência.
+   * Tudo vira `{ menuName, items }`.
+   */
   static extractJson(text: string): unknown {
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const body = (fenced ? fenced[1] : text).trim();
-    const start = body.indexOf("{");
-    const end = body.lastIndexOf("}");
-    if (start === -1 || end <= start) {
+    const values = MenuResponseParser.parseJsonValues(fenced ? fenced[1] : text);
+    if (values.length === 0) {
       throw new Error("nenhum objeto JSON encontrado");
     }
-    return JSON.parse(body.slice(start, end + 1));
+
+    let menuName: unknown = null;
+    const items: unknown[] = [];
+    for (const value of values) {
+      if (Array.isArray(value)) {
+        items.push(...value);
+      } else if (value && typeof value === "object") {
+        const data = value as { menuName?: unknown; items?: unknown };
+        if (Array.isArray(data.items)) {
+          menuName = menuName ?? data.menuName ?? null;
+          items.push(...data.items);
+        } else if ("name" in data || "price" in data) {
+          items.push(data);
+        }
+      }
+    }
+    return { menuName, items };
+  }
+
+  /** Todos os objetos/listas JSON de primeiro nível do texto, ignorando o que não parseia. */
+  private static parseJsonValues(text: string): unknown[] {
+    const values: unknown[] = [];
+    let index = 0;
+    while (index < text.length) {
+      const start = text.slice(index).search(/[[{]/);
+      if (start === -1) {
+        break;
+      }
+      const from = index + start;
+      const end = MenuResponseParser.findClosing(text, from);
+      if (end !== -1) {
+        try {
+          values.push(JSON.parse(text.slice(from, end + 1)));
+          index = end + 1;
+          continue;
+        } catch {
+          // Não era JSON (ex.: "{aproximados}"): segue procurando.
+        }
+      }
+      index = from + 1;
+    }
+    return values;
+  }
+
+  /** Posição do fecho que equilibra `text[start]`, respeitando strings; -1 se não fechar. */
+  private static findClosing(text: string, start: number): number {
+    let depth = 0;
+    let inString = false;
+    for (let i = start; i < text.length; i += 1) {
+      const char = text[i];
+      if (inString) {
+        if (char === "\\") {
+          i += 1;
+        } else if (char === '"') {
+          inString = false;
+        }
+      } else if (char === '"') {
+        inString = true;
+      } else if (char === "{" || char === "[") {
+        depth += 1;
+      } else if (char === "}" || char === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          return i;
+        }
+      }
+    }
+    return -1;
   }
 
   private static cleanText(value: unknown, maxLength: number): string | null {

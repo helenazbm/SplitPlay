@@ -14,6 +14,28 @@ describe("MenuResponseParser", () => {
     ).toHaveLength(1);
   });
 
+  test("aceita texto depois do JSON, inclusive com chaves", () => {
+    const parsed = parser.parse('{"items":[{"name":"Água","price":5}]}\nObs.: preços {aproximados}.');
+    expect(parsed.items).toEqual([{ section: null, name: "Água", price: 5 }]);
+  });
+
+  test("aceita um objeto solto por item (modelo sem structured outputs)", () => {
+    const parsed = parser.parse(
+      '{"section":"Bebidas","name":"Chopp 300ml","price":12.9}\n{"section":"Bebidas","name":"Água","price":5}',
+    );
+    expect(parsed.items.map((item) => item.name)).toEqual(["Chopp 300ml", "Água"]);
+  });
+
+  test("aceita lista de itens no topo e junta vários objetos com items", () => {
+    expect(parser.parse('[{"name":"Água","price":5},{"name":"Suco","price":9}]').items).toHaveLength(2);
+
+    const merged = parser.parse(
+      '{"menuName":"Bar do Zé","items":[{"name":"Água","price":5}]}\n{"menuName":null,"items":[{"name":"Suco","price":9}]}',
+    );
+    expect(merged.menuName).toBe("Bar do Zé");
+    expect(merged.items.map((item) => item.name)).toEqual(["Água", "Suco"]);
+  });
+
   test("texto sem JSON vira AiError bad-response", () => {
     expect(() => parser.parse("não consegui ler")).toThrow(
       expect.objectContaining({ code: "bad-response" }),

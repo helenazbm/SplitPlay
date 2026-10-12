@@ -556,6 +556,8 @@ export default function MesaPedidosTab({
       }
       case "leave":
         return `${byName} saiu do item. Valor atualizado: ${perPerson} por pessoa.`;
+      case "menu-price":
+        return `O preço do item "${item.name}" foi mudado por ${byName} para ${brl.format(lc.newPrice ?? 0)}.`;
       default:
         return null;
     }

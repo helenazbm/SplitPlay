@@ -11,6 +11,12 @@
       "structuredOutputs": false,
       "pricingUsdPerMillion": { "input": 0, "output": 0 }
     },
+    "free-qwen": {
+      "provider": "openrouter",
+      "model": "qwen/qwen3.8-27b:free",
+      "structuredOutputs": true,
+      "pricingUsdPerMillion": { "input": 0, "output": 0 }
+    },
     "paid": {
       "provider": "openrouter",
       "model": "google/gemini-3.5-flash-lite",

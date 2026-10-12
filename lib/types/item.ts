@@ -4,7 +4,9 @@ export type ItemLastChangeType =
   | "accept"
   | "decline"
   | "leave"
-  | "remove";
+  | "remove"
+  /** Preço do item no cardápio mudou (gravado pela Cloud Function `onMenuItemWrite`). */
+  | "menu-price";
 
 /** Último evento relevante do item — alimenta o aviso inline (sem central de notificações). */
 export type ItemLastChange = {
@@ -13,6 +15,9 @@ export type ItemLastChange = {
   /** Relevante para "invite" (quem foi convidado) e "remove" (quem foi removido). */
   targetUid?: string | null;
   at: unknown;
+  /** Preço unitário antes/depois — só em "menu-price". */
+  oldPrice?: number | null;
+  newPrice?: number | null;
 };
 
 export type TableItem = {
@@ -38,6 +43,11 @@ export type TableItem = {
   createdAtMs: number | null;
   updatedAt: unknown;
   lastChange: ItemLastChange | null;
+  /**
+   * Item do cardápio de onde veio. Nome e preço seguem o cardápio e não podem
+   * ser editados na comanda. `null` = item digitado à mão.
+   */
+  menuItemId: string | null;
 };
 
 export type CreateTableItemInput = {
@@ -47,6 +57,8 @@ export type CreateTableItemInput = {
   /** Criador + convidados; o service separa quem entra aceito e quem entra pendente. */
   consumerUids: string[];
   icon?: string | null;
+  /** Use `addMenuItemToComanda` (menuService), que calcula nome e preço. */
+  menuItemId?: string | null;
 };
 
 export type UpdateItemDetailsInput = {

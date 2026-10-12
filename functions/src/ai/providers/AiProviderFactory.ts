@@ -29,6 +29,8 @@ export function createAiProvider(
         config.apiKey,
         String(config.profile.model),
         config.profile.structuredOutputs === true,
+        fetch,
+        config.profile.fallbackModels ?? [],
       );
   }
 }

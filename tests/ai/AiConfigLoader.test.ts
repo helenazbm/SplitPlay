@@ -54,6 +54,17 @@ describe("AiConfigLoader", () => {
     expect(() => new AiConfigLoader(configFile(), { AI_PROFILE: "x" }).load()).toThrow(AiError);
   });
 
+  test("fallbackModels precisa ser lista de ids", () => {
+    const file = configFile();
+    file.profiles.free.fallbackModels = ["reserva/b:free"];
+    expect(new AiConfigLoader(file, {}).load().profile.fallbackModels).toEqual(["reserva/b:free"]);
+
+    file.profiles.free.fallbackModels = [""] as string[];
+    expect(() => new AiConfigLoader(file, {}).load()).toThrow(
+      expect.objectContaining({ code: "config-invalid" }),
+    );
+  });
+
   test("emulador sem chave usa o mock", () => {
     const config = new AiConfigLoader(configFile(), { FUNCTIONS_EMULATOR: "true" }).load();
     expect(config.profileName).toBe("mock");

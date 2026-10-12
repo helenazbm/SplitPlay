@@ -250,8 +250,8 @@ export default function CardapioSheet({
       </p>
       <p className="font-poppins text-[#8f8f8f]" style={{ fontSize: "var(--text-fluid-xs)" }}>
         {isAdmin
-          ? "Fotografe o cardápio do restaurante e os itens aparecem aqui para todo mundo pedir."
-          : "Quem criou a mesa pode fotografar o cardápio. Enquanto isso, adicione o item à mão."}
+          ? "Tire uma foto do cardápio do restaurante ou envie imagens dele, e os itens aparecem aqui para todo mundo pedir."
+          : "Quem criou a mesa pode fotografar ou enviar o cardápio. Enquanto isso, adicione o item à mão."}
       </p>
       {isAdmin ? (
         <button
@@ -262,7 +262,7 @@ export default function CardapioSheet({
           style={{ height: "40px", paddingInline: "22px", fontSize: "13px", gap: "8px", marginTop: "4px" }}
         >
           <i aria-hidden="true" className="pi pi-camera" />
-          Fotografar cardápio
+          Fotografar ou enviar cardápio
         </button>
       ) : null}
     </div>
@@ -279,7 +279,7 @@ export default function CardapioSheet({
             {isAdmin ? (
               <SheetDashedButton onClick={openCamera} disabled={editSaving}>
                 <i aria-hidden="true" className="pi pi-camera" />
-                Fotografar mais páginas
+                Fotografar ou enviar mais páginas
               </SheetDashedButton>
             ) : null}
             <SheetPrimaryButton

@@ -49,6 +49,7 @@ export class OpenRouterProvider implements AiProvider {
     readonly model: string,
     private readonly structuredOutputs: boolean,
     private readonly fetchFn: typeof fetch = fetch,
+    private readonly fallbackModels: string[] = [],
   ) {}
 
   async complete(request: AiVisionRequest): Promise<AiCompletion> {
@@ -86,7 +87,11 @@ export class OpenRouterProvider implements AiProvider {
 
   private buildBody(request: AiVisionRequest): Record<string, unknown> {
     const body: Record<string, unknown> = {
-      model: this.model,
+      // Com reservas, o OpenRouter tenta cada modelo em ordem e devolve em
+      // `model` quem respondeu de fato.
+      ...(this.fallbackModels.length > 0
+        ? { models: [this.model, ...this.fallbackModels] }
+        : { model: this.model }),
       temperature: 0,
       max_tokens: request.maxOutputTokens,
       messages: [

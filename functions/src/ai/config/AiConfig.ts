@@ -10,6 +10,11 @@ export type AiProfile = {
   provider: AiProviderName;
   /** Id do modelo no provedor (ex.: "google/gemini-3.5-flash-lite"). */
   model?: string;
+  /**
+   * Modelos reserva, em ordem. O OpenRouter tenta o próximo quando o anterior
+   * recusa (ex.: modelo :free sobrecarregado). Precisam aceitar imagem.
+   */
+  fallbackModels?: string[];
   /** Pede JSON Schema estrito ao provedor. Modelos :free costumam não suportar. */
   structuredOutputs?: boolean;
   pricingUsdPerMillion?: Pricing;

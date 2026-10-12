@@ -98,6 +98,16 @@ export class AiConfigLoader {
     if (typeof profile.model !== "string" || profile.model.length === 0) {
       throw new AiError("config-invalid", `ai.config.json: perfil "${name}" precisa de \`model\`.`);
     }
+    if (
+      profile.fallbackModels !== undefined &&
+      (!Array.isArray(profile.fallbackModels) ||
+        profile.fallbackModels.some((model) => typeof model !== "string" || model.length === 0))
+    ) {
+      throw new AiError(
+        "config-invalid",
+        `ai.config.json: perfil "${name}" tem \`fallbackModels\` inválido (lista de ids de modelo).`,
+      );
+    }
     if (!AiConfigLoader.isPricing(profile.pricingUsdPerMillion)) {
       throw new AiError(
         "config-invalid",
